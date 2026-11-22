@@ -1,22 +1,30 @@
 # Peripherals Hub
 
-Centralized desktop hub (Electron + React + TypeScript + `node-hid` on Windows 11) for configuring:
+Hub de escritorio modular (Electron, React, TypeScript y node-hid en Windows 11) para configurar perifericos de alto rendimiento sin software privativo.
 
-- **Ajazz AJ159 Pro** (Wireless/Wired 8K Mouse)
-- **MAD60HE** (60% Magnetic Hall Effect Keyboard)
+## Estado actual
 
-Without relying on bloated, proprietary software.
+- Arquitectura modular desacoplada basada en drivers por carpeta (`drivers/`).
+- Enumeracion pasiva de hardware HID funcional (`pnpm list-hid`).
+- Identificacion de hardware realizada para mouse Ajazz AJ159 Pro y teclado MAD60HE.
+- Especificacion del protocolo y diseno de contratos de drivers en revision.
 
-##  Scripts
-
-### Enumerar dispositivos HID conectados
-
-Para descubrir las interfaces, `vendorId`, `productId`, `usagePage`, `usage`, `interface` y `path` de los periféricos conectados y guardar el resultado en JSON:
+## Como ejecutar
 
 ```bash
+# Instalar dependencias
+pnpm install
+
+# Comprobar tipos TypeScript
+pnpm typecheck
+
+# Enumerar dispositivos HID conectados en modo pasivo
 pnpm list-hid
-# O pasando una ruta personalizada de salida:
-pnpm tsx scripts/list-hid.ts --out mis-dispositivos.json
 ```
 
-Por defecto, la salida se guarda en `docs/protocol/discovered-hid-devices.json`.
+## Como anadir un driver
+
+1. Crear una carpeta dentro de `drivers/<identificador-dispositivo>/`.
+2. Definir `manifest.json` con vendorId, productId, usagePage y lista de capacidades soportadas.
+3. Crear `driver.ts` implementando la interfaz estandar `Driver` (`connect`, `readState`, `apply`, `disconnect`).
+4. Documentar los paquetes capturados que respaldan la implementacion en `docs/protocol/<identificador-dispositivo>/`.

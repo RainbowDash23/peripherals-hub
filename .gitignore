@@ -2,12 +2,22 @@
 node_modules/
 .pnpm-store/
 
+# Local AI instructions and configs
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.agents/
+
 # Build and distribution
 dist/
 build/
 out/
 release/
 docs/
+# Captures and discovery outputs
+captures/
+docs/protocol/discovered-hid-devices.json
+discovered-hid-devices.json
 # Logs and diagnostics
 *.log
 npm-debug.log*
