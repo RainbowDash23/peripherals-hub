@@ -7,13 +7,6 @@ Centralized desktop hub (Electron + React + TypeScript + `node-hid` on Windows 1
 
 Without relying on bloated, proprietary software.
 
-##  Reglas de Seguridad (AGENTS.md)
-
-1. **Nunca enviar bytes a un dispositivo que no estén respaldados por una captura documentada.**
-2. **Nada de firmware:** Cero comandos DFU, bootloader o flasheo. Solo configuración de usuario.
-3. **Documentar cada hallazgo en `docs/protocol/`.**
-4. **Modo seguro / solo lectura:** No se escribe nada al hardware hasta validar las capturas.
-
 ##  Scripts
 
 ### Enumerar dispositivos HID conectados
