@@ -1,0 +1,110 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { importProfileFromCapture } from './storage.js';
+import { encodeTable13, encodeTable14 } from './codec.js';
+
+interface RawCaptureEntry {
+  type: string;
+  data: number[];
+}
+
+export function runTests(): boolean {
+  console.log('=== Iniciando Pruebas de Codificacion/Decodificacion MAD60HE ===');
+  const capturePath = resolve(process.cwd(), 'captures/mad60he_actuacion_[tecla]_[antes]_a_[despues].json');
+  const rawPackets = JSON.parse(readFileSync(capturePath, 'utf-8')) as RawCaptureEntry[];
+
+  // 1. Reconstruir perfil desde captura
+  const profile = importProfileFromCapture(capturePath);
+  console.log(`[Test] Perfil importado con exito. Total de teclas: ${profile.keys.length}`);
+
+  // Comprobar teclas conocidas
+  console.log(`[Test] Tecla W (idx 16) Actuacion: ${profile.keys[16]?.actuationRaw} (esperado: 10)`);
+  console.log(`[Test] Tecla A (idx 29) Actuacion: ${profile.keys[29]?.actuationRaw} (esperado: 150)`);
+  console.log(`[Test] Tecla A (idx 29) RT: [${profile.keys[29]?.rtEnabled}, ${profile.keys[29]?.rtPressRaw}, ${profile.keys[29]?.rtReleaseRaw}] (esperado: [1, 30, 30])`);
+
+  if (profile.keys[16]?.actuationRaw !== 10 || profile.keys[29]?.actuationRaw !== 150) {
+    throw new Error('Fallo en decodificacion de Tabla 13');
+  }
+  if (profile.keys[29]?.rtEnabled !== 1 || profile.keys[29]?.rtPressRaw !== 30 || profile.keys[29]?.rtReleaseRaw !== 30) {
+    throw new Error('Fallo en decodificacion de Tabla 14');
+  }
+
+  // 2. Extraer de la captura el ultimo lote enviado de Tabla 13 y Tabla 14
+  const t13Sends = rawPackets.filter((p) => p.type === 'sendReport' && p.data[0] === 3 && p.data[1] === 150 && p.data[2] === 13);
+  const lastT13Batch = t13Sends.slice(-7); // Son 7 trozos
+  if (lastT13Batch.length !== 7) {
+    throw new Error(`Se esperaban 7 trozos en el ultimo lote de Tabla 13, pero hay ${lastT13Batch.length}`);
+  }
+
+  const t14Sends = rawPackets.filter((p) => p.type === 'sendReport' && p.data[0] === 3 && p.data[1] === 150 && p.data[2] === 14);
+  const lastT14Batch = t14Sends.slice(-18); // Son 18 trozos
+  if (lastT14Batch.length !== 18) {
+    throw new Error(`Se esperaban 18 trozos en el ultimo lote de Tabla 14, pero hay ${lastT14Batch.length}`);
+  }
+
+  // 3. Volver a codificar desde el perfil reconstruido
+  const reEncodedT13 = encodeTable13(profile);
+  const reEncodedT14 = encodeTable14(profile);
+
+  // 4. Comparar byte por byte con el lote original capturado
+  console.log('[Test] Comparando Tabla 13 generada byte a byte contra captura...');
+  for (let c = 0; c < 7; c++) {
+    const originalChunk = lastT13Batch[c]!.data;
+    const generatedChunk = reEncodedT13[c]!.bytes;
+
+    for (let b = 0; b < 32; b++) {
+      if (originalChunk[b] !== generatedChunk[b]) {
+        throw new Error(`Discrepancia en Tabla 13 Trozo ${c} Byte ${b}: original ${originalChunk[b]} vs generado ${generatedChunk[b]}`);
+      }
+    }
+  }
+  console.log('  -> Tabla 13: 7 de 7 trozos identicos byte a byte.');
+
+  console.log('[Test] Comparando Tabla 14 generada byte a byte contra captura...');
+  for (let c = 0; c < 18; c++) {
+    const originalChunk = lastT14Batch[c]!.data;
+    const generatedChunk = reEncodedT14[c]!.bytes;
+
+    for (let b = 0; b < 32; b++) {
+      if (originalChunk[b] !== generatedChunk[b]) {
+        throw new Error(`Discrepancia en Tabla 14 Trozo ${c} Byte ${b}: original ${originalChunk[b]} vs generado ${generatedChunk[b]}`);
+      }
+    }
+  }
+  console.log('  -> Tabla 14: 18 de 18 trozos identicos byte a byte.');
+
+  // 5. Verificar limites extremos 10 a 400 (0.10 a 4.00 mm) y 2 a 400 (0.02 a 4.00 mm)
+  console.log('[Test] Probando validacion de limites extremos (10 a 400 cs mm)...');
+  const extremeKeys = profile.keys.map((k, i) => ({
+    ...k,
+    actuationRaw: i % 2 === 0 ? 10 : 400,
+    rtEnabled: 1 as const,
+    rtPressRaw: i % 2 === 0 ? 2 : 400,
+    rtReleaseRaw: i % 2 === 0 ? 2 : 400,
+  }));
+
+  const reEncodedExtremeT13 = encodeTable13({ ...profile, keys: extremeKeys });
+  const reEncodedExtremeT14 = encodeTable14({ ...profile, keys: extremeKeys });
+  if (reEncodedExtremeT13.length !== 7 || reEncodedExtremeT14.length !== 18) {
+    throw new Error('Fallo al codificar limites extremos');
+  }
+
+  // Comprobar que 400 en big-endian es [0x01, 0x90]
+  // En trozo 0 de T13, tecla 1 (start 0, count 11, index 1) esta en payload[9 + 2] = payload[11], payload[12]
+  if (reEncodedExtremeT13[0]!.bytes[11] !== 0x01 || reEncodedExtremeT13[0]!.bytes[12] !== 0x90) {
+    throw new Error('Codificacion incorrecta de 400 en big-endian');
+  }
+  console.log('  -> Limites 10 y 400 cs mm codificados y verificados correctamente.');
+
+  console.log('=== Todas las pruebas de codec MAD60HE completadas con exito ===\n');
+  return true;
+}
+
+if (process.argv[1]?.includes('test-codec')) {
+  try {
+    runTests();
+  } catch (error) {
+    console.error('Error en pruebas de codec:', error);
+    process.exit(1);
+  }
+}

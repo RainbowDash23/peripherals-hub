@@ -1,0 +1,18 @@
+{
+  "id": "ajazz-aj159-pro",
+  "name": "Ajazz AJ159 Pro",
+  "category": "mouse",
+  "version": "0.1.0",
+  "devices": [
+    {
+      "vendorId": "0x3151",
+      "productId": "0x4026",
+      "name": "AJAZZ AJ159 PRO"
+    }
+  ],
+  "controlInterface": {
+    "usagePage": "0xFFFF",
+    "usage": "0x0001"
+  },
+  "capabilities": []
+}

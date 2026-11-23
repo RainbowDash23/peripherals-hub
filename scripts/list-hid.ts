@@ -109,24 +109,45 @@ function run(): void {
 
     // Mostrar resumen en consola agrupado por VID:PID
     console.log('\n--- Resumen de Dispositivos Detectados ---');
-    const uniqueDevices = new Map<string, { product?: string; manufacturer?: string; interfaces: number[] }>();
+    interface DeviceSummaryEntry {
+      product?: string;
+      manufacturer?: string;
+      endpoints: Array<{
+        interface: number;
+        usagePageHex?: string;
+        usagePage?: number;
+        usageHex?: string;
+        usage?: number;
+      }>;
+    }
+
+    const uniqueDevices = new Map<string, DeviceSummaryEntry>();
 
     for (const dev of devices) {
       const key = `${dev.vendorIdHex}:${dev.productIdHex}`;
       const entry = uniqueDevices.get(key) ?? {
         product: dev.product,
         manufacturer: dev.manufacturer,
-        interfaces: [],
+        endpoints: [],
       };
-      if (!entry.interfaces.includes(dev.interface)) {
-        entry.interfaces.push(dev.interface);
-      }
+      entry.endpoints.push({
+        interface: dev.interface,
+        usagePageHex: dev.usagePageHex,
+        usagePage: dev.usagePage,
+        usageHex: dev.usageHex,
+        usage: dev.usage,
+      });
       uniqueDevices.set(key, entry);
     }
 
     for (const [vidPid, info] of uniqueDevices.entries()) {
-      const label = [info.manufacturer, info.product].filter(Boolean).join(' - ') || 'Dispositivo desconocido';
-      console.log(`- ${vidPid} [${label}] (Interfaces: ${info.interfaces.join(', ')})`);
+      const label = [info.manufacturer?.trim(), info.product?.trim()].filter(Boolean).join(' - ') || 'Dispositivo desconocido';
+      console.log(`- ${vidPid} [${label}]`);
+      for (const ep of info.endpoints) {
+        const up = ep.usagePageHex ?? (ep.usagePage !== undefined ? `0x${ep.usagePage.toString(16)}` : 'N/A');
+        const u = ep.usageHex ?? (ep.usage !== undefined ? `0x${ep.usage.toString(16)}` : 'N/A');
+        console.log(`    interface: ${ep.interface.toString().padStart(2, ' ')} | usagePage: ${up.padEnd(6, ' ')} (${ep.usagePage ?? 'N/A'}) | usage: ${u.padEnd(6, ' ')} (${ep.usage ?? 'N/A'})`);
+      }
     }
     console.log('------------------------------------------\n');
   } catch (error) {

@@ -1,15 +1,67 @@
-/**
- * Script de Preload con contextBridge.
- * Expone únicamente APIs seguras e indirectas hacia el Renderer.
- * No expone nodeIntegration ni APIs sin validar.
- */
+import { contextBridge, ipcRenderer } from 'electron';
+import type { DiscoveredPeripheral } from '../core/hid/device-manager.js';
+import type { HidReportEvent } from '../core/hid/lab-monitor.js';
+import { IPC_CHANNELS } from '../core/ipc/channels.js';
 
-export interface PeripheralsHubApi {
-  readonly platform: string;
-  readonly getAppVersion: () => Promise<string>;
+export interface DriverChangeDifference {
+  readonly index: number;
+  readonly label: string;
+  readonly field: string;
+  readonly previous: number;
+  readonly next: number;
 }
 
-export const peripheralsHubApi: PeripheralsHubApi = {
-  platform: process.platform,
-  getAppVersion: async () => '1.0.0',
+export interface DriverPreparePlan {
+  readonly changes: readonly DriverChangeDifference[];
+  readonly totalKeysAffected: number;
+}
+
+export interface PeripheralsHubApi {
+  getAppVersion: () => Promise<string>;
+  getPeripherals: () => Promise<readonly DiscoveredPeripheral[]>;
+  onPeripheralsUpdated: (callback: (devices: readonly DiscoveredPeripheral[]) => void) => () => void;
+  startLabMonitoring: (path: string) => Promise<{ success: boolean; error?: string }>;
+  stopLabMonitoring: () => Promise<{ success: boolean }>;
+  onLabReport: (callback: (report: HidReportEvent) => void) => () => void;
+  onLabError: (callback: (error: string) => void) => () => void;
+  getDriverState: (driverId: string) => Promise<{ connected: boolean; values: Record<string, unknown> }>;
+  prepareDriverApply: (driverId: string, partialState: Record<string, unknown>) => Promise<DriverPreparePlan>;
+  applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) => Promise<{ success: boolean }>;
+  importDriverCapture: (driverId: string) => Promise<{ name: string; keys: unknown[] } | null>;
+}
+
+export const api: PeripheralsHubApi = {
+  getAppVersion: () => ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION),
+  getPeripherals: () => ipcRenderer.invoke(IPC_CHANNELS.PERIPHERALS_GET_ALL),
+  onPeripheralsUpdated: (callback) => {
+    const subscription = (_event: unknown, devices: readonly DiscoveredPeripheral[]) => callback(devices);
+    ipcRenderer.on(IPC_CHANNELS.PERIPHERALS_UPDATED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PERIPHERALS_UPDATED, subscription);
+    };
+  },
+  startLabMonitoring: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.LAB_START_MONITORING, path),
+  stopLabMonitoring: () => ipcRenderer.invoke(IPC_CHANNELS.LAB_STOP_MONITORING),
+  onLabReport: (callback) => {
+    const subscription = (_event: unknown, report: HidReportEvent) => callback(report);
+    ipcRenderer.on(IPC_CHANNELS.LAB_REPORT_RECEIVED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.LAB_REPORT_RECEIVED, subscription);
+    };
+  },
+  onLabError: (callback) => {
+    const subscription = (_event: unknown, error: string) => callback(error);
+    ipcRenderer.on(IPC_CHANNELS.LAB_ERROR, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.LAB_ERROR, subscription);
+    };
+  },
+  getDriverState: (driverId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRIVER_READ_STATE, driverId),
+  prepareDriverApply: (driverId: string, partialState: Record<string, unknown>) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DRIVER_PREPARE_APPLY, driverId, partialState),
+  applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DRIVER_APPLY, driverId, partialState),
+  importDriverCapture: (driverId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRIVER_IMPORT_CAPTURE, driverId),
 };
+
+contextBridge.exposeInMainWorld('peripheralsHub', api);
