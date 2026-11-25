@@ -14,6 +14,8 @@ export interface KeyMatrixValue {
 interface KeyMatrixControlProps {
   readonly config: KeyMatrixControlSchema;
   readonly value: unknown;
+  readonly savedValue?: unknown;
+  readonly lastSentValue?: unknown;
   readonly onChange?: (value: unknown) => void;
   readonly disabled?: boolean;
 }
@@ -21,10 +23,13 @@ interface KeyMatrixControlProps {
 export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
   config,
   value,
+  savedValue,
+  lastSentValue,
   onChange,
   disabled = false,
 }) => {
   const { rows, cols, totalKeys, rowLabels = [], fields = [] } = config ?? {};
+  const [viewMode, setViewMode] = useState<'actuation' | 'rapidTrigger'>('actuation');
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set([29])); // Tecla A por defecto
   const [batchValues, setBatchValues] = useState<Record<string, number>>({
     actuationRaw: 150,
@@ -33,12 +38,19 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
     rtReleaseRaw: 50,
   });
 
-  const matrixState: Record<number, Record<string, number>> =
-    value && typeof value === 'object' && !Array.isArray(value)
-      ? (value as Record<number, Record<string, number>>)
-      : Array.isArray(value)
-      ? Object.fromEntries(value.map((v: Record<string, number>, idx: number) => [idx, v]))
-      : {};
+  const toKeyDict = (val: unknown): Record<number, Record<string, number>> => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      return val as Record<number, Record<string, number>>;
+    }
+    if (Array.isArray(val)) {
+      return Object.fromEntries(val.map((v: Record<string, number>, idx: number) => [idx, v]));
+    }
+    return {};
+  };
+
+  const matrixState = toKeyDict(value);
+  const savedMatrixState = toKeyDict(savedValue);
+  const lastSentMatrixState = toKeyDict(lastSentValue);
 
   const toggleSelectKey = (idx: number, e: React.MouseEvent) => {
     if (disabled) return;
@@ -99,23 +111,52 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
           <span className="text-xs text-text-muted">(Usa Shift/Ctrl para seleccion multiple)</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={selectAll}
-            className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-accent hover:text-accent text-xs font-mono text-text-secondary transition-colors cursor-pointer"
-          >
-            Seleccionar Todas
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={clearSelection}
-            className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-border-subtle text-xs font-mono text-text-secondary transition-colors cursor-pointer"
-          >
-            Limpiar
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Selector de Vista: Recorrido vs Rapid Trigger */}
+          <div className="flex items-center gap-1 bg-surface-base p-0.5 rounded border border-border-default text-xs font-mono">
+            <span className="px-2 text-text-muted text-[11px]">Ver:</span>
+            <button
+              type="button"
+              onClick={() => setViewMode('actuation')}
+              className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                viewMode === 'actuation'
+                  ? 'bg-accent/20 text-accent font-medium'
+                  : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              Recorrido
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('rapidTrigger')}
+              className={`px-2.5 py-1 rounded transition-colors cursor-pointer ${
+                viewMode === 'rapidTrigger'
+                  ? 'bg-accent/20 text-accent font-medium'
+                  : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              Rapid Trigger
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={selectAll}
+              className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-accent hover:text-accent text-xs font-mono text-text-secondary transition-colors cursor-pointer"
+            >
+              Seleccionar Todas
+            </button>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={clearSelection}
+              className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-border-subtle text-xs font-mono text-text-secondary transition-colors cursor-pointer"
+            >
+              Limpiar
+            </button>
+          </div>
         </div>
       </div>
 
@@ -128,7 +169,7 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
           {Array.from({ length: totalKeys }, (_, idx) => {
             const r = Math.floor(idx / cols);
             const c = idx % cols;
-            const keyLabel = rowLabels[r]?.[c] ?? `T${idx}`;
+            const keyLabel = rowLabels[r]?.[c] ?? `Tecla ${idx}`;
             const isSelected = selectedIndices.has(idx);
 
             const keyData = matrixState[idx] ?? {
@@ -138,6 +179,14 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
               rtReleaseRaw: 50,
             };
 
+            const savedKeyData = savedMatrixState[idx];
+            const isPending =
+              savedKeyData !== undefined &&
+              (keyData.actuationRaw !== savedKeyData.actuationRaw ||
+                keyData.rtEnabled !== savedKeyData.rtEnabled ||
+                keyData.rtPressRaw !== savedKeyData.rtPressRaw ||
+                keyData.rtReleaseRaw !== savedKeyData.rtReleaseRaw);
+
             const isCustom = keyData.actuationRaw !== 150 || keyData.rtEnabled === 1;
 
             return (
@@ -146,9 +195,12 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                 type="button"
                 disabled={disabled}
                 onClick={(e) => toggleSelectKey(idx, e)}
-                className={`flex flex-col items-center justify-between p-1.5 h-14 rounded border text-left font-mono transition-all cursor-pointer ${
+                title={`Tecla ${keyLabel} (idx ${idx})${isPending ? ' - Pendiente de aplicar' : ''}`}
+                className={`flex flex-col items-center justify-between p-1.5 h-16 rounded border text-left font-mono transition-all cursor-pointer relative ${
                   isSelected
                     ? 'border-accent bg-accent/20 text-text-primary shadow-xs ring-1 ring-accent'
+                    : isPending
+                    ? 'border-amber-500/70 bg-amber-500/10 text-text-primary ring-1 ring-amber-500/30'
                     : isCustom
                     ? 'border-accent/40 bg-surface-base hover:border-accent/80 text-text-primary'
                     : 'border-border-subtle bg-surface-base/80 hover:border-border-default text-text-secondary'
@@ -156,12 +208,30 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
               >
                 <div className="w-full flex items-center justify-between">
                   <span className="text-[11px] font-semibold truncate">{keyLabel}</span>
-                  <span className="text-[9px] text-text-muted">{idx}</span>
+                  <div className="flex items-center gap-1">
+                    {isPending && (
+                      <span className="px-1 py-0.2 rounded text-[7px] font-bold bg-amber-500/30 text-amber-300 border border-amber-500/40">
+                        PEND
+                      </span>
+                    )}
+                    <span className="text-[9px] text-text-muted">{idx}</span>
+                  </div>
                 </div>
-                <div className="w-full text-[9px] tabular-nums text-text-muted truncate">
-                  {((keyData.actuationRaw ?? 150) / 100).toFixed(2)}mm
-                  {keyData.rtEnabled === 1 && (
-                    <span className="ml-1 text-accent font-bold">RT</span>
+
+                <div className="w-full text-[9px] tabular-nums truncate text-center">
+                  {viewMode === 'actuation' ? (
+                    <span>
+                      {((keyData.actuationRaw ?? 150) / 100).toFixed(2)} mm
+                      {keyData.rtEnabled === 1 && (
+                        <span className="ml-1 text-accent font-bold">RT</span>
+                      )}
+                    </span>
+                  ) : keyData.rtEnabled === 1 ? (
+                    <span className="text-accent">
+                      RT: ↓{((keyData.rtPressRaw ?? 50) / 100).toFixed(2)} ↑{((keyData.rtReleaseRaw ?? 50) / 100).toFixed(2)}
+                    </span>
+                  ) : (
+                    <span className="text-text-muted">RT OFF</span>
                   )}
                 </div>
               </button>

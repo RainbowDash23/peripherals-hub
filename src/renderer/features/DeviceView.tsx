@@ -26,11 +26,20 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
 
   const [driverValues, setDriverValues] = useState<Record<string, unknown>>({});
   const [initialValues, setInitialValues] = useState<Record<string, unknown>>({});
+  const [lastSentValues, setLastSentValues] = useState<Record<string, unknown>>({});
+  const [lastSentAt, setLastSentAt] = useState<number | null>(null);
   const [allowHardwareWrite, setAllowHardwareWrite] = useState<boolean>(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [pendingChanges, setPendingChanges] = useState<readonly DriverChangeDifference[]>([]);
   const [isApplying, setIsApplying] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const formatTime = (ts: number): string => {
+    const d = new Date(ts);
+    const hh = d.getHours().toString().padStart(2, '0');
+    const mm = d.getMinutes().toString().padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
 
   // Cargar estado inicial del driver
   useEffect(() => {
@@ -49,6 +58,13 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
           if (typeof state.values['allowHardwareWrite'] === 'boolean') {
             setAllowHardwareWrite(state.values['allowHardwareWrite']);
           }
+          if (typeof state.values['lastSentToHardwareAt'] === 'number') {
+            setLastSentAt(state.values['lastSentToHardwareAt']);
+            setLastSentValues(JSON.parse(JSON.stringify(state.values)));
+          } else {
+            setLastSentAt(null);
+            setLastSentValues({});
+          }
         }
       })
       .catch((err) => {
@@ -64,6 +80,8 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     setDriverValues((prev) => ({
       ...prev,
       [capabilityId]: val,
+      ...(capabilityId === 'analogMatrix' ? { keys: val } : {}),
+      ...(capabilityId === 'keys' ? { analogMatrix: val } : {}),
     }));
     setStatusMessage(null);
   };
@@ -79,9 +97,10 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
           keys: imported.keys,
           analogMatrix: imported.keys,
         }));
+        const summaryDesc = imported.summary?.description ?? `${imported.keys.length} teclas`;
         setStatusMessage({
           type: 'success',
-          text: `Perfil importado con exito (${imported.keys.length} teclas cargadas desde captura). Recuerda aplicar para guardarlo.`,
+          text: `Captura importada con exito -> ${summaryDesc}. Recuerda guardar o aplicar al teclado para confirmar los cambios.`,
         });
       }
     } catch (err: unknown) {
@@ -125,15 +144,25 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
         writeToHardware: allowHardwareWrite,
       };
 
-      await window.peripheralsHub.applyDriverSettings(manifest.id, payload);
+      const res = await window.peripheralsHub.applyDriverSettings(manifest.id, payload);
       setInitialValues(JSON.parse(JSON.stringify(driverValues)));
       setIsConfirmOpen(false);
-      setStatusMessage({
-        type: 'success',
-        text: allowHardwareWrite
-          ? 'Perfil guardado y transmitido al teclado con exito.'
-          : 'Perfil guardado y validado localmente con exito (modo seguro).',
-      });
+
+      if (res.hardwareWritten) {
+        setLastSentAt(res.appliedAt);
+        setLastSentValues(JSON.parse(JSON.stringify(driverValues)));
+        const t13Info = res.transmission ? `${res.transmission.table13ChunksSent}/${res.transmission.table13TotalChunks} trozos de Tabla 13` : '';
+        const t14Info = res.transmission ? `${res.transmission.table14ChunksSent}/${res.transmission.table14TotalChunks} trozos de Tabla 14` : '';
+        setStatusMessage({
+          type: 'success',
+          text: `Cambios aplicados y confirmados por eco: ${t13Info} y ${t14Info} enviados al teclado a las ${formatTime(res.appliedAt)}.`,
+        });
+      } else {
+        setStatusMessage({
+          type: 'success',
+          text: 'Perfil guardado con exito en el hub (solo local, sin transmision al teclado).',
+        });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setStatusMessage({ type: 'error', text: `Fallo al aplicar: ${msg}` });
@@ -227,19 +256,37 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
         </div>
       )}
 
-      {/* Identificacion de Origen de Datos y Opcion de Hardware */}
+      {/* Identificacion de Origen de Datos, Estado Persistente y Opcion de Hardware */}
       <div className="p-3.5 rounded bg-surface-raised border border-border-subtle flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-mono font-medium text-text-primary uppercase tracking-wider">
-              Perfil guardado en el hub
+              Estado del Perfil:
             </span>
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-surface-muted text-text-muted">
-              No leido del teclado
+            <span
+              className={`px-2 py-0.5 rounded text-xs font-mono font-medium border flex items-center gap-1.5 ${
+                lastSentAt
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : 'bg-surface-muted text-text-secondary border-border-default'
+              }`}
+            >
+              <Shield className="w-3 h-3" />
+              {lastSentAt ? `enviado al teclado a las ${formatTime(lastSentAt)}` : 'solo guardado en el hub'}
             </span>
+            {hasUnsavedChanges ? (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                Borrador con cambios pendientes
+              </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-surface-base text-text-muted border border-border-subtle">
+                Sin cambios pendientes
+              </span>
+            )}
           </div>
           <p className="text-xs text-text-secondary leading-relaxed max-w-2xl">
-            Los valores mostrados corresponden al perfil local almacenado en el hub. El teclado fisico no dispone de comandos de lectura de tablas documentados.
+            {lastSentAt
+              ? `El perfil fue transmitido y verificado por eco en el teclado a las ${formatTime(lastSentAt)}. Las modificaciones posteriores permanecen en borrador hasta volver a guardar o aplicar.`
+              : 'El perfil actual reside exclusivamente en el hub. Ninguna configuracion se envia al teclado sin confirmacion explícita.'}
           </p>
         </div>
 
@@ -284,12 +331,16 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
           <div className="space-y-4">
             {capabilities.map((cap) => {
               const val = driverValues[cap.id] ?? (cap.id === 'analogMatrix' ? driverValues['keys'] : undefined);
+              const savedVal = initialValues[cap.id] ?? (cap.id === 'analogMatrix' ? initialValues['keys'] : undefined);
+              const lastSentVal = lastSentValues[cap.id] ?? (cap.id === 'analogMatrix' ? lastSentValues['keys'] : undefined);
               return (
                 <div key={cap.id} className={cap.primitive === 'key-matrix' ? 'w-full' : 'max-w-xl'}>
                   <DynamicControl
                     capability={cap}
                     value={val}
-                    disabled={false}
+                    savedValue={savedVal}
+                    lastSentValue={lastSentVal}
+                    disabled={isApplying}
                     onChange={(newVal) => handleValueChange(cap.id, newVal)}
                   />
                 </div>

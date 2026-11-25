@@ -5,6 +5,8 @@ import { KeyMatrixControl } from './KeyMatrixControl.js';
 interface DynamicControlProps {
   readonly capability: CapabilityDescriptor;
   readonly value: unknown;
+  readonly savedValue?: unknown;
+  readonly lastSentValue?: unknown;
   readonly onChange?: (value: unknown) => void;
   readonly disabled?: boolean;
 }
@@ -12,6 +14,8 @@ interface DynamicControlProps {
 export const DynamicControl: React.FC<DynamicControlProps> = ({
   capability,
   value,
+  savedValue,
+  lastSentValue,
   onChange,
   disabled = false,
 }) => {
@@ -111,6 +115,8 @@ export const DynamicControl: React.FC<DynamicControlProps> = ({
           <KeyMatrixControl
             config={config as import('../../../core/drivers/types.js').KeyMatrixControlSchema}
             value={value}
+            savedValue={savedValue}
+            lastSentValue={lastSentValue}
             disabled={disabled}
             onChange={onChange}
           />

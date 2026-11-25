@@ -16,6 +16,32 @@ export interface DriverPreparePlan {
   readonly totalKeysAffected: number;
 }
 
+export interface DriverApplyResult {
+  readonly success: boolean;
+  readonly savedLocally: boolean;
+  readonly hardwareWritten: boolean;
+  readonly transmission?: {
+    readonly table13ChunksSent: number;
+    readonly table13TotalChunks: number;
+    readonly table14ChunksSent: number;
+    readonly table14TotalChunks: number;
+  };
+  readonly appliedAt: number;
+  readonly message: string;
+}
+
+export interface DriverImportResult {
+  readonly name: string;
+  readonly keys: unknown[];
+  readonly summary?: {
+    readonly table13Found: boolean;
+    readonly table13KeysCount: number;
+    readonly table14Found: boolean;
+    readonly table14KeysCount: number;
+    readonly description: string;
+  };
+}
+
 export interface PeripheralsHubApi {
   getAppVersion: () => Promise<string>;
   getPeripherals: () => Promise<readonly DiscoveredPeripheral[]>;
@@ -26,8 +52,8 @@ export interface PeripheralsHubApi {
   onLabError: (callback: (error: string) => void) => () => void;
   getDriverState: (driverId: string) => Promise<{ connected: boolean; values: Record<string, unknown> }>;
   prepareDriverApply: (driverId: string, partialState: Record<string, unknown>) => Promise<DriverPreparePlan>;
-  applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) => Promise<{ success: boolean }>;
-  importDriverCapture: (driverId: string) => Promise<{ name: string; keys: unknown[] } | null>;
+  applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) => Promise<DriverApplyResult>;
+  importDriverCapture: (driverId: string) => Promise<DriverImportResult | null>;
 }
 
 export const api: PeripheralsHubApi = {

@@ -65,13 +65,14 @@ export function encodeTable13(profile: KeyboardProfile): readonly EncodedReport[
 /**
  * Decodifica trozos recibidos de la tabla 13 y actualiza los valores de actuacion del perfil.
  */
-export function decodeTable13Chunk(chunkBytes: readonly number[], targetKeys: KeyConfig[]): void {
+export function decodeTable13Chunk(chunkBytes: readonly number[], targetKeys: KeyConfig[]): readonly number[] {
   if (chunkBytes[0] !== 3 || chunkBytes[1] !== 150 || chunkBytes[2] !== 13) {
     throw new Error('Cabecera invalida para reporte de Tabla 13');
   }
 
   const start = chunkBytes[6] ?? 0;
   const count = chunkBytes[7] ?? 0;
+  const affectedIndices: number[] = [];
 
   for (let k = 0; k < count; k++) {
     const keyIdx = start + k;
@@ -84,8 +85,11 @@ export function decodeTable13Chunk(chunkBytes: readonly number[], targetKeys: Ke
         ...prev,
         actuationRaw,
       };
+      affectedIndices.push(keyIdx);
     }
   }
+
+  return affectedIndices;
 }
 
 /**
@@ -144,13 +148,14 @@ export function encodeTable14(profile: KeyboardProfile): readonly EncodedReport[
 /**
  * Decodifica trozos recibidos de la tabla 14 y actualiza los valores de Rapid Trigger del perfil.
  */
-export function decodeTable14Chunk(chunkBytes: readonly number[], targetKeys: KeyConfig[]): void {
+export function decodeTable14Chunk(chunkBytes: readonly number[], targetKeys: KeyConfig[]): readonly number[] {
   if (chunkBytes[0] !== 3 || chunkBytes[1] !== 150 || chunkBytes[2] !== 14) {
     throw new Error('Cabecera invalida para reporte de Tabla 14');
   }
 
   const start = chunkBytes[6] ?? 0;
   const count = chunkBytes[7] ?? 0;
+  const affectedIndices: number[] = [];
 
   for (let k = 0; k < count; k++) {
     const keyIdx = start + k;
@@ -167,6 +172,9 @@ export function decodeTable14Chunk(chunkBytes: readonly number[], targetKeys: Ke
         rtPressRaw,
         rtReleaseRaw,
       };
+      affectedIndices.push(keyIdx);
     }
   }
+
+  return affectedIndices;
 }

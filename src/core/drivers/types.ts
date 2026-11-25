@@ -118,7 +118,7 @@ export interface Driver {
   readonly manifest: DriverManifest;
   connect(connection: DeviceConnection): Promise<void>;
   readState(): Promise<DeviceState>;
-  apply(partialState: Record<string, unknown>): Promise<void>;
+  apply(partialState: Record<string, unknown>): Promise<unknown>;
   disconnect(): Promise<void>;
   onReport?(listener: (reportId: number, data: Uint8Array) => void): () => void;
 }

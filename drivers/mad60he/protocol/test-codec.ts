@@ -96,6 +96,51 @@ export function runTests(): boolean {
   }
   console.log('  -> Limites 10 y 400 cs mm codificados y verificados correctamente.');
 
+  // 6. Verificar resumen de importacion correcta
+  console.log('[Test] Verificando resumen de importador en captura completa...');
+  if (!profile.summary || !profile.summary.table13Found || profile.summary.table13KeysCount !== 70) {
+    throw new Error('Resumen de Tabla 13 incorrecto en captura completa');
+  }
+  if (!profile.summary.table14Found || profile.summary.table14KeysCount !== 70) {
+    throw new Error('Resumen de Tabla 14 incorrecto en captura completa');
+  }
+  console.log(`  -> Resumen verificado: ${profile.summary.description}`);
+
+  // 7. Probar rechazo estricto de capturas sin tablas
+  console.log('[Test] Probando rechazo de captura sin tablas: mad60he_conexion.json...');
+  const conexionPath = resolve(process.cwd(), 'captures/mad60he_conexion.json');
+  let threwConexion = false;
+  try {
+    importProfileFromCapture(conexionPath);
+  } catch (err: unknown) {
+    threwConexion = true;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('Captura rechazada') || !msg.includes('Tabla 13: no') || !msg.includes('Tabla 14: no')) {
+      throw new Error(`Mensaje de error inesperado en mad60he_conexion: ${msg}`);
+    }
+    console.log(`  -> Rechazo correcto con mensaje: "${msg}"`);
+  }
+  if (!threwConexion) {
+    throw new Error('Se esperaba rechazo para mad60he_conexion.json pero no lanzo error');
+  }
+
+  console.log('[Test] Probando rechazo de captura sin tablas: mad60he_lectura.json...');
+  const lecturaPath = resolve(process.cwd(), 'captures/mad60he_lectura.json');
+  let threwLectura = false;
+  try {
+    importProfileFromCapture(lecturaPath);
+  } catch (err: unknown) {
+    threwLectura = true;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('Captura rechazada') || !msg.includes('Tabla 13: no') || !msg.includes('Tabla 14: no')) {
+      throw new Error(`Mensaje de error inesperado en mad60he_lectura: ${msg}`);
+    }
+    console.log(`  -> Rechazo correcto con mensaje: "${msg}"`);
+  }
+  if (!threwLectura) {
+    throw new Error('Se esperaba rechazo para mad60he_lectura.json pero no lanzo error');
+  }
+
   console.log('=== Todas las pruebas de codec MAD60HE completadas con exito ===\n');
   return true;
 }

@@ -29,7 +29,7 @@ var manifest_default = {
         rowLabels: [
           ["Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
           ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"],
-          ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Enter", "Enter2"],
+          ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Enter", "Tecla 41"],
           ["Tecla 42", "Tecla 43", "Tecla 44", "Tecla 45", "Tecla 46", "Tecla 47", "Tecla 48", "Tecla 49", "Tecla 50", "Tecla 51", "Tecla 52", "Tecla 53", "Tecla 54", "Tecla 55"],
           ["Tecla 56", "Tecla 57", "Tecla 58", "Tecla 59", "Tecla 60", "Tecla 61", "Tecla 62", "Tecla 63", "Tecla 64", "Tecla 65", "Tecla 66", "Tecla 67", "Tecla 68", "Tecla 69"]
         ],
@@ -307,7 +307,9 @@ var Mad60HeDriver = class {
       values: {
         keys: this.profile.keys,
         profileName: this.profile.name,
-        allowHardwareWrite: this.isHardwareWriteAllowed()
+        allowHardwareWrite: this.isHardwareWriteAllowed(),
+        lastSentToHardwareAt: this.profile.lastSentToHardwareAt,
+        updatedAt: this.profile.updatedAt
       }
     };
   }
@@ -323,7 +325,7 @@ var Mad60HeDriver = class {
     const labels = [
       ["Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
       ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"],
-      ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Enter", "Enter2"]
+      ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Enter", "Tecla 41"]
     ];
     for (let i = 0; i < TOTAL_USEFUL_KEYS; i++) {
       const cur = this.profile.keys[i] ?? { actuationRaw: 150, rtEnabled: 0, rtPressRaw: 50, rtReleaseRaw: 50 };
@@ -404,35 +406,69 @@ var Mad60HeDriver = class {
     if (typeof partialState["allowHardwareWrite"] === "boolean") {
       this.setAllowHardwareWrite(partialState["allowHardwareWrite"]);
     }
-    if (partialState["keys"] && Array.isArray(partialState["keys"])) {
-      const plan = this.prepareApply(partialState["keys"]);
-      this.profile = {
-        ...this.profile,
-        updatedAt: Date.now(),
-        keys: partialState["keys"]
+    if (!partialState["keys"] || !Array.isArray(partialState["keys"])) {
+      return {
+        success: true,
+        savedLocally: false,
+        hardwareWritten: false,
+        appliedAt: this.profile.updatedAt,
+        message: "No se enviaron teclas para modificar."
       };
-      saveProfile(this.profile);
-      console.log(`[Mad60HeDriver] Perfil guardado localmente (${plan.changes.length} cambios registrados).`);
-      const hardwareEnabled = this.isHardwareWriteAllowed() || partialState["writeToHardware"] === true;
-      if (hardwareEnabled) {
-        if (!this.connection?.path) {
-          throw new Error("No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para emitir escrituras al hardware");
-        }
-        console.log(`[Mad60HeDriver] Opcion explicita activa: enviando al hardware en ${this.connection.path}...`);
-        const HID = await import("node-hid");
-        const device = new HID.default.HID(this.connection.path);
+    }
+    const plan = this.prepareApply(partialState["keys"]);
+    const now = Date.now();
+    this.profile = {
+      ...this.profile,
+      updatedAt: now,
+      keys: partialState["keys"]
+    };
+    saveProfile(this.profile);
+    console.log(`[Mad60HeDriver] Perfil guardado localmente (${plan.changes.length} cambios registrados).`);
+    const hardwareEnabled = this.isHardwareWriteAllowed() || partialState["writeToHardware"] === true;
+    if (hardwareEnabled) {
+      if (!this.connection?.path) {
+        throw new Error("No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para emitir escrituras al hardware");
+      }
+      console.log(`[Mad60HeDriver] Opcion explicita activa: enviando al hardware en ${this.connection.path}...`);
+      const HID = await import("node-hid");
+      const device = new HID.default.HID(this.connection.path);
+      try {
+        const t13Res = await sendChunksWithEchoValidation(device, plan.t13Reports, 1e3);
+        const t14Res = await sendChunksWithEchoValidation(device, plan.t14Reports, 1e3);
+        console.log("[Mad60HeDriver] Tablas 13 y 14 transmitidas y verificadas por eco en el teclado con exito.");
+        const appliedAt = Date.now();
+        this.profile = {
+          ...this.profile,
+          lastSentToHardwareAt: appliedAt
+        };
+        saveProfile(this.profile);
+        return {
+          success: true,
+          savedLocally: true,
+          hardwareWritten: true,
+          transmission: {
+            table13ChunksSent: t13Res.totalChunksSent,
+            table13TotalChunks: plan.t13Reports.length,
+            table14ChunksSent: t14Res.totalChunksSent,
+            table14TotalChunks: plan.t14Reports.length
+          },
+          appliedAt,
+          message: `${t13Res.totalChunksSent}/${plan.t13Reports.length} trozos de Tabla 13 y ${t14Res.totalChunksSent}/${plan.t14Reports.length} trozos de Tabla 14 confirmados por eco.`
+        };
+      } finally {
         try {
-          await sendChunksWithEchoValidation(device, plan.t13Reports, 1e3);
-          await sendChunksWithEchoValidation(device, plan.t14Reports, 1e3);
-          console.log("[Mad60HeDriver] Tablas 13 y 14 transmitidas y verificadas por eco en el teclado con exito.");
-        } finally {
-          try {
-            device.close();
-          } catch {
-          }
+          device.close();
+        } catch {
         }
       }
     }
+    return {
+      success: true,
+      savedLocally: true,
+      hardwareWritten: false,
+      appliedAt: now,
+      message: "solo guardado en el hub"
+    };
   }
   async disconnect() {
     this.connection = null;

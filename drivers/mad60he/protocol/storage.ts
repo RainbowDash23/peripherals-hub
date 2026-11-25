@@ -37,12 +37,25 @@ export function loadProfile(customPath?: string): KeyboardProfile {
   }
 }
 
+export interface CaptureInspectionSummary {
+  readonly table13Found: boolean;
+  readonly table13KeysCount: number;
+  readonly table14Found: boolean;
+  readonly table14KeysCount: number;
+  readonly description: string;
+}
+
+export interface ImportedProfileResult extends KeyboardProfile {
+  readonly summary: CaptureInspectionSummary;
+}
+
 /**
  * Reconstruye un perfil completo a partir de un arreglo de entradas de captura HID.
+ * Si falta la Tabla 13 o la Tabla 14, rechaza la importacion con un mensaje claro.
  */
 export function importProfileFromCaptureData(
   entries: ReadonlyArray<{ type?: string; data: number[] }>
-): KeyboardProfile {
+): ImportedProfileResult {
   const keys: KeyConfig[] = Array.from({ length: TOTAL_USEFUL_KEYS }, () => ({
     actuationRaw: 150,
     rtEnabled: 0,
@@ -50,29 +63,66 @@ export function importProfileFromCaptureData(
     rtReleaseRaw: 50,
   }));
 
+  const table13KeySet = new Set<number>();
+  const table14KeySet = new Set<number>();
+  let table13Found = false;
+  let table14Found = false;
+
   for (const entry of entries) {
     const d = entry.data;
     if (d && d[0] === 3 && d[1] === 150) {
       if (d[2] === 13) {
-        decodeTable13Chunk(d, keys);
+        table13Found = true;
+        const affected = decodeTable13Chunk(d, keys);
+        for (const idx of affected) {
+          table13KeySet.add(idx);
+        }
       } else if (d[2] === 14) {
-        decodeTable14Chunk(d, keys);
+        table14Found = true;
+        const affected = decodeTable14Chunk(d, keys);
+        for (const idx of affected) {
+          table14KeySet.add(idx);
+        }
       }
     }
   }
+
+  const table13KeysCount = table13KeySet.size;
+  const table14KeysCount = table14KeySet.size;
+
+  const t13Desc = table13Found ? `si (${table13KeysCount} teclas)` : 'no';
+  const t14Desc = table14Found ? `si (${table14KeysCount} teclas)` : 'no';
+
+  if (!table13Found || !table14Found) {
+    const missing: string[] = [];
+    if (!table13Found) missing.push('Tabla 13 (recorrido de actuacion)');
+    if (!table14Found) missing.push('Tabla 14 (Rapid Trigger)');
+    throw new Error(
+      `Captura rechazada: falta ${missing.join(' y ')}. Encontrado en captura -> Tabla 13: ${t13Desc}, Tabla 14: ${t14Desc}.`
+    );
+  }
+
+  const summary: CaptureInspectionSummary = {
+    table13Found,
+    table13KeysCount,
+    table14Found,
+    table14KeysCount,
+    description: `Tabla 13: ${t13Desc}, Tabla 14: ${t14Desc}`,
+  };
 
   return {
     version: '1.0.0',
     name: 'Perfil Importado de Captura',
     updatedAt: Date.now(),
     keys,
+    summary,
   };
 }
 
 /**
  * Reconstruye un perfil completo a partir de un archivo JSON de captura (captures/mad60he_*.json).
  */
-export function importProfileFromCapture(captureFilePath: string): KeyboardProfile {
+export function importProfileFromCapture(captureFilePath: string): ImportedProfileResult {
   const content = readFileSync(captureFilePath, 'utf-8');
   const entries = JSON.parse(content) as Array<{ type?: string; data: number[] }>;
   return importProfileFromCaptureData(entries);

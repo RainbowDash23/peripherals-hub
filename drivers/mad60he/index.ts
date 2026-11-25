@@ -22,6 +22,20 @@ export interface ApplyPlan {
   readonly t14Reports: readonly EncodedReport[];
 }
 
+export interface ApplyResult {
+  readonly success: boolean;
+  readonly savedLocally: boolean;
+  readonly hardwareWritten: boolean;
+  readonly transmission?: {
+    readonly table13ChunksSent: number;
+    readonly table13TotalChunks: number;
+    readonly table14ChunksSent: number;
+    readonly table14TotalChunks: number;
+  };
+  readonly appliedAt: number;
+  readonly message: string;
+}
+
 export class Mad60HeDriver implements Driver {
   public readonly manifest: DriverManifest = manifest;
   private connection: DeviceConnection | null = null;
@@ -56,6 +70,8 @@ export class Mad60HeDriver implements Driver {
         keys: this.profile.keys,
         profileName: this.profile.name,
         allowHardwareWrite: this.isHardwareWriteAllowed(),
+        lastSentToHardwareAt: this.profile.lastSentToHardwareAt,
+        updatedAt: this.profile.updatedAt,
       },
     };
   }
@@ -73,7 +89,7 @@ export class Mad60HeDriver implements Driver {
     const labels = [
       ['Esc', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'Backspace'],
       ['Tab', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\\'],
-      ['Caps', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', "'", 'Enter', 'Enter2'],
+      ['Caps', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', "'", 'Enter', 'Tecla 41'],
     ];
 
     for (let i = 0; i < TOTAL_USEFUL_KEYS; i++) {
@@ -160,46 +176,82 @@ export class Mad60HeDriver implements Driver {
    * La rutina de transmision fisica USB con eco y timeout queda preparada para cuando
    * el usuario autorice escrituras activas al hardware.
    */
-  public async apply(partialState: Record<string, unknown>): Promise<void> {
+  public async apply(partialState: Record<string, unknown>): Promise<ApplyResult> {
     if (typeof partialState['allowHardwareWrite'] === 'boolean') {
       this.setAllowHardwareWrite(partialState['allowHardwareWrite']);
     }
 
-    if (partialState['keys'] && Array.isArray(partialState['keys'])) {
-      const plan = this.prepareApply(partialState['keys'] as KeyConfig[]);
-      this.profile = {
-        ...this.profile,
-        updatedAt: Date.now(),
-        keys: partialState['keys'] as KeyConfig[],
+    if (!partialState['keys'] || !Array.isArray(partialState['keys'])) {
+      return {
+        success: true,
+        savedLocally: false,
+        hardwareWritten: false,
+        appliedAt: this.profile.updatedAt,
+        message: 'No se enviaron teclas para modificar.',
       };
-      saveProfile(this.profile);
-      console.log(`[Mad60HeDriver] Perfil guardado localmente (${plan.changes.length} cambios registrados).`);
+    }
 
-      const hardwareEnabled = this.isHardwareWriteAllowed() || partialState['writeToHardware'] === true;
-      if (hardwareEnabled) {
-        if (!this.connection?.path) {
-          throw new Error('No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para emitir escrituras al hardware');
-        }
+    const plan = this.prepareApply(partialState['keys'] as KeyConfig[]);
+    const now = Date.now();
+    this.profile = {
+      ...this.profile,
+      updatedAt: now,
+      keys: partialState['keys'] as KeyConfig[],
+    };
+    saveProfile(this.profile);
+    console.log(`[Mad60HeDriver] Perfil guardado localmente (${plan.changes.length} cambios registrados).`);
 
-        console.log(`[Mad60HeDriver] Opcion explicita activa: enviando al hardware en ${this.connection.path}...`);
-        const HID = await import('node-hid');
-        const device = new HID.default.HID(this.connection.path);
+    const hardwareEnabled = this.isHardwareWriteAllowed() || partialState['writeToHardware'] === true;
+    if (hardwareEnabled) {
+      if (!this.connection?.path) {
+        throw new Error('No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para emitir escrituras al hardware');
+      }
 
+      console.log(`[Mad60HeDriver] Opcion explicita activa: enviando al hardware en ${this.connection.path}...`);
+      const HID = await import('node-hid');
+      const device = new HID.default.HID(this.connection.path);
+
+      try {
+        const t13Res = await sendChunksWithEchoValidation(device, plan.t13Reports, 1000);
+        const t14Res = await sendChunksWithEchoValidation(device, plan.t14Reports, 1000);
+        console.log('[Mad60HeDriver] Tablas 13 y 14 transmitidas y verificadas por eco en el teclado con exito.');
+
+        const appliedAt = Date.now();
+        this.profile = {
+          ...this.profile,
+          lastSentToHardwareAt: appliedAt,
+        };
+        saveProfile(this.profile);
+
+        return {
+          success: true,
+          savedLocally: true,
+          hardwareWritten: true,
+          transmission: {
+            table13ChunksSent: t13Res.totalChunksSent,
+            table13TotalChunks: plan.t13Reports.length,
+            table14ChunksSent: t14Res.totalChunksSent,
+            table14TotalChunks: plan.t14Reports.length,
+          },
+          appliedAt,
+          message: `${t13Res.totalChunksSent}/${plan.t13Reports.length} trozos de Tabla 13 y ${t14Res.totalChunksSent}/${plan.t14Reports.length} trozos de Tabla 14 confirmados por eco.`,
+        };
+      } finally {
         try {
-          // Enviar Tabla 13 (Actuacion) secuencialmente con validacion de eco de 32 bytes
-          await sendChunksWithEchoValidation(device, plan.t13Reports, 1000);
-          // Enviar Tabla 14 (Rapid Trigger) secuencialmente con validacion de eco de 32 bytes
-          await sendChunksWithEchoValidation(device, plan.t14Reports, 1000);
-          console.log('[Mad60HeDriver] Tablas 13 y 14 transmitidas y verificadas por eco en el teclado con exito.');
-        } finally {
-          try {
-            device.close();
-          } catch {
-            // Ignorar cierre
-          }
+          device.close();
+        } catch {
+          // Ignorar cierre
         }
       }
     }
+
+    return {
+      success: true,
+      savedLocally: true,
+      hardwareWritten: false,
+      appliedAt: now,
+      message: 'solo guardado en el hub',
+    };
   }
 
   public async disconnect(): Promise<void> {

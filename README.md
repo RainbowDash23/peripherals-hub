@@ -19,7 +19,11 @@ Hub de escritorio modular (Electron, React, TypeScript, Tailwind CSS y node-hid 
   - Codificador y decodificador de tablas 13 y 14 con verificacion automatica byte a byte contra capturas de trafico USB.
   - Transporte real node-hid conectado a la interfaz de control (UP 0xFF60, usage 0x61), con enmarcado estricto (33 bytes con 0 inicial via `write()`, sin `sendFeatureReport`, recepcion de eco de 32 bytes) protegido detras de una opcion explicita (`PERIPHERALS_HUB_ALLOW_HARDWARE_WRITE` o selector en interfaz), desactivada por defecto.
   - Interfaz grafica con rotulacion clara indicando que los valores corresponden al perfil guardado en el hub (no leido del hardware), adaptacion dinamica del boton de guardado segun el modo ("Guardar Perfil" vs "Guardar y Enviar al Teclado") y modal de confirmacion con comprobacion de diferencias y aviso de cierre del driver oficial.
-  - Acceso para importar perfiles desde capturas JSON tanto desde la interfaz (boton "Importar Captura") como desde linea de comandos (`pnpm import-profile`).
+  - Acceso para importar perfiles desde capturas JSON tanto desde la interfaz (boton "Importar Captura") como desde linea de comandos (`pnpm import-profile`), con validacion de tablas completas e informe detallado (rechazo estricto ante capturas sin tablas).
+  - Gestion de tres estados en la matriz de teclas: borrador con cambios pendientes, perfil guardado en el hub y ultimo enviado al teclado. Marca visual de pendiente en cada tecla modificada tras asignar valores por lote, que se sincroniza inmediatamente tras aplicar sin recargar la vista.
+  - Selector de modo de visualizacion en la matriz para alternar entre recorrido de actuacion y Rapid Trigger (indicando ON/OFF y sensibilidades de pulsacion y rearme).
+  - Indicador persistente del estado del perfil ("solo guardado en el hub" o "enviado al teclado a las HH:MM") e informe transparente del resultado del envio (trozos confirmados por eco 7/7 y 18/18 o motivo exacto del fallo).
+  - Nomenclatura rigurosa de la matriz: posicion 41 identificada como "Tecla 41", evitando etiquetas inventadas.
   - Suite de pruebas unificada con `pnpm test`.
 
 ## Como ejecutar

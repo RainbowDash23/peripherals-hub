@@ -24,6 +24,7 @@ export interface KeyboardProfile {
   readonly version: string;
   readonly name: string;
   readonly updatedAt: number;
+  readonly lastSentToHardwareAt?: number;
   readonly keys: readonly KeyConfig[];
 }
 
