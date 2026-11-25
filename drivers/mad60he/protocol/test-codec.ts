@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { importProfileFromCapture } from './storage.js';
 import { encodeTable13, encodeTable14 } from './codec.js';
 
@@ -8,12 +9,17 @@ interface RawCaptureEntry {
   data: number[];
 }
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const FIXTURES_DIR = resolve(__dirname, 'fixtures');
+
 export function runTests(): boolean {
   console.log('=== Iniciando Pruebas de Codificacion/Decodificacion MAD60HE ===');
-  const capturePath = resolve(process.cwd(), 'captures/mad60he_actuacion_[tecla]_[antes]_a_[despues].json');
+  const capturePath = resolve(FIXTURES_DIR, 'mad60he_actuacion_a_de_010_a_150.json');
   const rawPackets = JSON.parse(readFileSync(capturePath, 'utf-8')) as RawCaptureEntry[];
 
-  // 1. Reconstruir perfil desde captura
+  // 1. Reconstruir perfil desde captura original de actuacion de tecla A
+  console.log('[Test] Cargando fixture original: mad60he_actuacion_a_de_010_a_150.json...');
   const profile = importProfileFromCapture(capturePath);
   console.log(`[Test] Perfil importado con exito. Total de teclas: ${profile.keys.length}`);
 
@@ -47,7 +53,7 @@ export function runTests(): boolean {
   const reEncodedT14 = encodeTable14(profile);
 
   // 4. Comparar byte por byte con el lote original capturado
-  console.log('[Test] Comparando Tabla 13 generada byte a byte contra captura...');
+  console.log('[Test] mad60he_actuacion_a_de_010_a_150.json: Comparando Tabla 13 generada byte a byte contra captura...');
   for (let c = 0; c < 7; c++) {
     const originalChunk = lastT13Batch[c]!.data;
     const generatedChunk = reEncodedT13[c]!.bytes;
@@ -58,9 +64,9 @@ export function runTests(): boolean {
       }
     }
   }
-  console.log('  -> Tabla 13: 7 de 7 trozos identicos byte a byte.');
+  console.log('  -> Tabla 13: 7 de 7 trozos identicos byte a byte (actuacion tecla A de 0.10 a 1.50 mm cubierta).');
 
-  console.log('[Test] Comparando Tabla 14 generada byte a byte contra captura...');
+  console.log('[Test] mad60he_actuacion_a_de_010_a_150.json: Comparando Tabla 14 generada byte a byte contra captura...');
   for (let c = 0; c < 18; c++) {
     const originalChunk = lastT14Batch[c]!.data;
     const generatedChunk = reEncodedT14[c]!.bytes;
@@ -90,7 +96,6 @@ export function runTests(): boolean {
   }
 
   // Comprobar que 400 en big-endian es [0x01, 0x90]
-  // En trozo 0 de T13, tecla 1 (start 0, count 11, index 1) esta en payload[9 + 2] = payload[11], payload[12]
   if (reEncodedExtremeT13[0]!.bytes[11] !== 0x01 || reEncodedExtremeT13[0]!.bytes[12] !== 0x90) {
     throw new Error('Codificacion incorrecta de 400 en big-endian');
   }
@@ -106,39 +111,22 @@ export function runTests(): boolean {
   }
   console.log(`  -> Resumen verificado: ${profile.summary.description}`);
 
-  // 7. Probar rechazo estricto de capturas sin tablas
-  console.log('[Test] Probando rechazo de captura sin tablas: mad60he_conexion.json...');
-  const conexionPath = resolve(process.cwd(), 'captures/mad60he_conexion.json');
-  let threwConexion = false;
+  // 7. Probar rechazo estricto de captura sin tablas desde fixture
+  console.log('[Test] Probando rechazo de fixture sin tablas: mad60he_sin_tablas.json...');
+  const sinTablasPath = resolve(FIXTURES_DIR, 'mad60he_sin_tablas.json');
+  let threwSinTablas = false;
   try {
-    importProfileFromCapture(conexionPath);
+    importProfileFromCapture(sinTablasPath);
   } catch (err: unknown) {
-    threwConexion = true;
+    threwSinTablas = true;
     const msg = err instanceof Error ? err.message : String(err);
     if (!msg.includes('Captura rechazada') || !msg.includes('Tabla 13: no') || !msg.includes('Tabla 14: no')) {
-      throw new Error(`Mensaje de error inesperado en mad60he_conexion: ${msg}`);
+      throw new Error(`Mensaje de error inesperado en mad60he_sin_tablas: ${msg}`);
     }
     console.log(`  -> Rechazo correcto con mensaje: "${msg}"`);
   }
-  if (!threwConexion) {
-    throw new Error('Se esperaba rechazo para mad60he_conexion.json pero no lanzo error');
-  }
-
-  console.log('[Test] Probando rechazo de captura sin tablas: mad60he_lectura.json...');
-  const lecturaPath = resolve(process.cwd(), 'captures/mad60he_lectura.json');
-  let threwLectura = false;
-  try {
-    importProfileFromCapture(lecturaPath);
-  } catch (err: unknown) {
-    threwLectura = true;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!msg.includes('Captura rechazada') || !msg.includes('Tabla 13: no') || !msg.includes('Tabla 14: no')) {
-      throw new Error(`Mensaje de error inesperado en mad60he_lectura: ${msg}`);
-    }
-    console.log(`  -> Rechazo correcto con mensaje: "${msg}"`);
-  }
-  if (!threwLectura) {
-    throw new Error('Se esperaba rechazo para mad60he_lectura.json pero no lanzo error');
+  if (!threwSinTablas) {
+    throw new Error('Se esperaba rechazo para mad60he_sin_tablas.json pero no lanzo error');
   }
 
   console.log('=== Todas las pruebas de codec MAD60HE completadas con exito ===\n');
