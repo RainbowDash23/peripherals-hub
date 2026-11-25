@@ -55,9 +55,8 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
         if (state && state.values) {
           setDriverValues(state.values);
           setInitialValues(JSON.parse(JSON.stringify(state.values)));
-          if (typeof state.values['allowHardwareWrite'] === 'boolean') {
-            setAllowHardwareWrite(state.values['allowHardwareWrite']);
-          }
+          // allowHardwareWrite siempre desactivada por defecto al iniciar la app
+          setAllowHardwareWrite(false);
           if (typeof state.values['lastSentToHardwareAt'] === 'number') {
             setLastSentAt(state.values['lastSentToHardwareAt']);
             setLastSentValues(JSON.parse(JSON.stringify(state.values)));
@@ -230,7 +229,9 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
               }`}
             >
               {allowHardwareWrite ? <Send className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-              {allowHardwareWrite ? 'Guardar y Enviar al Teclado' : 'Guardar Perfil'}
+              {allowHardwareWrite
+                ? 'Guardar en hub y escribir al teclado'
+                : 'Guardar solo en hub (sin escribir)'}
             </button>
           )}
         </div>
@@ -290,18 +291,36 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 border-t md:border-t-0 md:border-l border-border-subtle pt-2 md:pt-0 md:pl-4">
-          <label className="flex items-center gap-2 cursor-pointer text-xs font-mono select-none">
-            <input
-              type="checkbox"
-              checked={allowHardwareWrite}
-              onChange={(e) => setAllowHardwareWrite(e.target.checked)}
-              className="accent-accent w-4 h-4 rounded cursor-pointer"
-            />
-            <span className={allowHardwareWrite ? 'text-amber-400 font-bold' : 'text-text-secondary'}>
-              {allowHardwareWrite ? 'Escritura real en hardware activa' : 'Modo seguro (escritura en hardware desactivada)'}
+        <div className="flex items-center gap-3 shrink-0 border-t md:border-t-0 md:border-l border-border-subtle pt-3 md:pt-0 md:pl-4">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={allowHardwareWrite}
+            onClick={() => setAllowHardwareWrite((prev) => !prev)}
+            className={`inline-flex items-center gap-2.5 px-3 py-1.5 rounded border text-xs font-mono font-medium transition-all cursor-pointer select-none ${
+              allowHardwareWrite
+                ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 hover:bg-amber-500/25'
+                : 'bg-surface-base border-border-default text-zinc-400 hover:border-border-subtle hover:text-text-secondary'
+            }`}
+          >
+            <div
+              className={`w-7 h-4 flex items-center rounded-full p-0.5 transition-colors ${
+                allowHardwareWrite ? 'bg-amber-400' : 'bg-zinc-700'
+              }`}
+            >
+              <div
+                className={`bg-zinc-950 w-3 h-3 rounded-full shadow-xs transform transition-transform ${
+                  allowHardwareWrite ? 'translate-x-3' : 'translate-x-0'
+                }`}
+              />
+            </div>
+            <span>
+              Escritura al teclado:{' '}
+              <strong className={allowHardwareWrite ? 'text-amber-400 font-bold' : 'text-zinc-300 font-normal'}>
+                {allowHardwareWrite ? 'ACTIVADA' : 'DESACTIVADA'}
+              </strong>
             </span>
-          </label>
+          </button>
         </div>
       </div>
 
@@ -312,9 +331,6 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
             <Layers className="w-3.5 h-3.5 text-accent" />
             Capacidades del Dispositivo ({capabilities.length})
           </h2>
-          {hasUnsavedChanges && (
-            <span className="text-xs font-mono text-amber-400">Hay modificaciones sin guardar</span>
-          )}
         </div>
 
         {capabilities.length === 0 ? (
@@ -498,8 +514,8 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
                 {isApplying
                   ? 'Procesando...'
                   : allowHardwareWrite
-                  ? 'Confirmar, Guardar y Enviar al Teclado'
-                  : 'Confirmar y Guardar Perfil'}
+                  ? 'Confirmar: Guardar en hub y escribir al teclado'
+                  : 'Confirmar: Guardar solo en hub (sin escribir)'}
               </button>
             </div>
           </div>
