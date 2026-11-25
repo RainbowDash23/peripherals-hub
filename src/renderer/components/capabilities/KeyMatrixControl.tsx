@@ -169,7 +169,9 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
           {Array.from({ length: totalKeys }, (_, idx) => {
             const r = Math.floor(idx / cols);
             const c = idx % cols;
-            const keyLabel = rowLabels[r]?.[c] ?? `Tecla ${idx}`;
+            const rawLabel = rowLabels[r]?.[c] ?? `Tecla ${idx}`;
+            const isUnidentified = /^Tecla\s+\d+$/i.test(rawLabel) || rawLabel.toLowerCase() === 'sin identificar';
+            const keyLabel = isUnidentified ? `Tecla ${idx}` : rawLabel;
             const isSelected = selectedIndices.has(idx);
 
             const keyData = matrixState[idx] ?? {
@@ -200,21 +202,30 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                   isSelected
                     ? 'border-accent bg-accent/20 text-text-primary shadow-xs ring-1 ring-accent'
                     : isPending
-                    ? 'border-amber-500/70 bg-amber-500/10 text-text-primary ring-1 ring-amber-500/30'
+                    ? 'border-amber-400/80 bg-amber-500/10 text-text-primary ring-1 ring-amber-400/40'
                     : isCustom
                     ? 'border-accent/40 bg-surface-base hover:border-accent/80 text-text-primary'
                     : 'border-border-subtle bg-surface-base/80 hover:border-border-default text-text-secondary'
                 }`}
               >
-                <div className="w-full flex items-center justify-between">
-                  <span className="text-[11px] font-semibold truncate">{keyLabel}</span>
-                  <div className="flex items-center gap-1">
+                <div className="w-full flex items-center justify-between gap-1">
+                  <span
+                    className={`font-semibold whitespace-nowrap leading-none ${
+                      keyLabel.length > 6 ? 'text-[9px]' : keyLabel.length > 4 ? 'text-[10px]' : 'text-[11px]'
+                    }`}
+                  >
+                    {keyLabel}
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
                     {isPending && (
-                      <span className="px-1 py-0.2 rounded text-[7px] font-bold bg-amber-500/30 text-amber-300 border border-amber-500/40">
-                        PEND
-                      </span>
+                      <span
+                        className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"
+                        title="Cambio pendiente de aplicar"
+                      />
                     )}
-                    <span className="text-[9px] text-text-muted">{idx}</span>
+                    {!isUnidentified && (
+                      <span className="text-[9px] text-text-muted leading-none shrink-0">{idx}</span>
+                    )}
                   </div>
                 </div>
 
