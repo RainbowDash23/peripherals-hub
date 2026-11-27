@@ -1,5 +1,110 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { KeyMatrixControlSchema } from '../../../core/drivers/types.js';
+
+interface PrecisionRangeFieldProps {
+  readonly label: string;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+  readonly value: number;
+  readonly disabled: boolean;
+  readonly onChange: (value: number) => void;
+}
+
+const PrecisionRangeField: React.FC<PrecisionRangeFieldProps> = ({
+  label,
+  min,
+  max,
+  step,
+  value,
+  disabled,
+  onChange,
+}) => {
+  const [draftText, setDraftText] = useState<string>(String(value));
+
+  useEffect(() => {
+    setDraftText(String(value));
+  }, [value]);
+
+  const clampValue = (next: number): number => Math.min(max, Math.max(min, Math.round(next)));
+
+  const commitDraft = () => {
+    const parsed = Number.parseInt(draftText, 10);
+    if (Number.isNaN(parsed)) {
+      setDraftText(String(value));
+      return;
+    }
+    const clamped = clampValue(parsed);
+    onChange(clamped);
+    setDraftText(String(clamped));
+  };
+
+  return (
+    <div className="p-2.5 rounded bg-surface-raised border border-border-subtle space-y-2">
+      <div className="flex justify-between items-center text-text-secondary gap-2">
+        <span>{label}</span>
+        <span className="text-text-primary font-bold tabular-nums">{(value / 100).toFixed(2)} mm</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(clampValue(Number(e.target.value)))}
+        className="w-full accent-accent bg-surface-muted h-1 rounded cursor-pointer"
+      />
+      <div className="flex items-center justify-between gap-1.5 pt-0.5">
+        <button
+          type="button"
+          disabled={disabled || value <= min}
+          onClick={() => onChange(clampValue(value - step))}
+          title="Disminuir 0.01 mm"
+          className="px-2 py-0.5 rounded bg-surface-base border border-border-default hover:border-accent text-text-secondary hover:text-text-primary disabled:opacity-40 cursor-pointer"
+        >
+          -
+        </button>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={draftText}
+            disabled={disabled}
+            onChange={(e) => {
+              const raw = e.target.value;
+              setDraftText(raw);
+              const parsed = Number.parseInt(raw, 10);
+              if (!Number.isNaN(parsed) && parsed >= min && parsed <= max) {
+                onChange(parsed);
+              }
+            }}
+            onBlur={commitDraft}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitDraft();
+              }
+            }}
+            aria-label={`${label} en centesimas de milimetro`}
+            className="w-16 px-1.5 py-0.5 rounded bg-surface-base border border-border-default text-center text-text-primary tabular-nums focus:outline-none focus:border-accent"
+          />
+          <span className="text-[10px] text-text-muted">cs mm</span>
+        </div>
+        <button
+          type="button"
+          disabled={disabled || value >= max}
+          onClick={() => onChange(clampValue(value + step))}
+          title="Aumentar 0.01 mm"
+          className="px-2 py-0.5 rounded bg-surface-base border border-border-default hover:border-accent text-text-secondary hover:text-text-primary disabled:opacity-40 cursor-pointer"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export interface KeyMatrixValue {
   readonly [keyIndex: number]: {
@@ -320,27 +425,23 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
             const val = batchValues[f.id] ?? (f.id === 'rtEnabled' ? 0 : f.id === 'actuationRaw' ? 150 : 50);
 
             if (f.primitive === 'slider') {
+              const minVal = f.min ?? (f.id === 'actuationRaw' ? 10 : 2);
+              const maxVal = f.max ?? 400;
+              const stepVal = f.step ?? 1;
+
               return (
-                <div key={f.id} className="p-2.5 rounded bg-surface-raised border border-border-subtle space-y-1">
-                  <div className="flex justify-between text-text-secondary">
-                    <span>{f.label}</span>
-                    <span className="text-text-primary font-bold">
-                      {val} ({((val as number) / 100).toFixed(2)} mm)
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={f.min ?? 10}
-                    max={f.max ?? 400}
-                    step={f.step ?? 1}
-                    value={val}
-                    disabled={disabled || selectedIndices.size === 0}
-                    onChange={(e) =>
-                      setBatchValues((prev) => ({ ...prev, [f.id]: Number(e.target.value) }))
-                    }
-                    className="w-full accent-accent bg-surface-muted h-1 rounded cursor-pointer"
-                  />
-                </div>
+                <PrecisionRangeField
+                  key={f.id}
+                  label={f.label}
+                  min={minVal}
+                  max={maxVal}
+                  step={stepVal}
+                  value={val as number}
+                  disabled={disabled || selectedIndices.size === 0}
+                  onChange={(nextVal) =>
+                    setBatchValues((prev) => ({ ...prev, [f.id]: nextVal }))
+                  }
+                />
               );
             }
 

@@ -255,17 +255,19 @@ export function parseMadKeyboardConfigContent(
         );
       }
 
-      const rtReleaseRaw = toCentihundredthsMm(rtEntry.release);
-      if (rtReleaseRaw < RT_MIN_RAW || rtReleaseRaw > RT_MAX_RAW) {
+      // En el JSON .mad-keyboard-config del fabricante los nombres estan invertidos respecto al firmware y la UI web:
+      // JSON "release" -> sensibilidad al pulsar (rtPressRaw); JSON "press" -> sensibilidad al soltar (rtReleaseRaw).
+      const rtPressRaw = toCentihundredthsMm(rtEntry.release);
+      if (rtPressRaw < RT_MIN_RAW || rtPressRaw > RT_MAX_RAW) {
         throw new Error(
-          `Sensibilidad al soltar (release) fuera de limites del hardware (${RT_MIN_RAW}-${RT_MAX_RAW} cs mm) en fila ${rtEntry.row}, col ${rtEntry.col} (idx ${rtIdx}): ${rtReleaseRaw} cs mm (${rtEntry.release} mm).`
+          `Sensibilidad al pulsar (campo JSON release) fuera de limites del hardware (${RT_MIN_RAW}-${RT_MAX_RAW} cs mm) en fila ${rtEntry.row}, col ${rtEntry.col} (idx ${rtIdx}): ${rtPressRaw} cs mm (${rtEntry.release} mm).`
         );
       }
 
-      const rtPressRaw = toCentihundredthsMm(rtEntry.press);
-      if (rtPressRaw < RT_MIN_RAW || rtPressRaw > RT_MAX_RAW) {
+      const rtReleaseRaw = toCentihundredthsMm(rtEntry.press);
+      if (rtReleaseRaw < RT_MIN_RAW || rtReleaseRaw > RT_MAX_RAW) {
         throw new Error(
-          `Sensibilidad al pulsar (press) fuera de limites del hardware (${RT_MIN_RAW}-${RT_MAX_RAW} cs mm) en fila ${rtEntry.row}, col ${rtEntry.col} (idx ${rtIdx}): ${rtPressRaw} cs mm (${rtEntry.press} mm).`
+          `Sensibilidad al soltar (campo JSON press) fuera de limites del hardware (${RT_MIN_RAW}-${RT_MAX_RAW} cs mm) en fila ${rtEntry.row}, col ${rtEntry.col} (idx ${rtIdx}): ${rtReleaseRaw} cs mm (${rtEntry.press} mm).`
         );
       }
 

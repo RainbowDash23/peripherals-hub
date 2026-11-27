@@ -129,14 +129,15 @@ export function runConfigImportTests(): boolean {
     throw new Error(`deadBand esperado 16/16, obtenido ${parsed.deadBand.topRaw}/${parsed.deadBand.bottomRaw}`);
   }
 
-  // Verificar valores especificos (incluyendo asimetria release vs press en tecla A, idx 29)
+  // Verificar valores especificos (incluyendo convencion invertida del JSON en tecla A, idx 29:
+  // JSON { release: 0.11, press: 0.5 } -> rtPressRaw = 11, rtReleaseRaw = 50)
   const keyW = parsed.keys[16]!;
   const keyA = parsed.keys[29]!;
   const keyEnter = parsed.keys[41]!;
   if (keyW.actuationRaw !== 10) {
     throw new Error(`Tecla W (idx 16) actuacion esperada 10, obtenida ${keyW.actuationRaw}`);
   }
-  if (keyA.actuationRaw !== 200 || keyA.rtEnabled !== 1 || keyA.rtReleaseRaw !== 10 || keyA.rtPressRaw !== 51) {
+  if (keyA.actuationRaw !== 200 || keyA.rtEnabled !== 1 || keyA.rtPressRaw !== 11 || keyA.rtReleaseRaw !== 50) {
     throw new Error(`Tecla A (idx 29) inesperada: ${JSON.stringify(keyA)}`);
   }
   if (keyEnter.actuationRaw !== 400) {
@@ -160,20 +161,37 @@ export function runConfigImportTests(): boolean {
   }
   console.log('[Test] Fixture sintetico parseado: 70 teclas, fila 5 ignorada, deadBand 16/16, etiquetas capa 0 validadas.');
 
-  // 2. Redondeo correcto con imprecision flotante IEEE-754 (ej: 0.29, 0.57, 0.14)
+  // 1b. Caso explicito verificado con hardware: JSON { release: 0.11, press: 0.5 } -> rtPressRaw 11, rtReleaseRaw 50
+  const swappedRtText = buildSyntheticMadKeyboardConfigText({
+    patchRt: [{ row: 2, col: 1, on: 1, release: 0.11, press: 0.5 }],
+  });
+  const swappedParsed = parseMadKeyboardConfigContent(swappedRtText);
+  if (swappedParsed.keys[29]!.rtPressRaw !== 11 || swappedParsed.keys[29]!.rtReleaseRaw !== 50) {
+    throw new Error(
+      `Mapeo invertido esperado rtPressRaw=11, rtReleaseRaw=50; obtenido ${JSON.stringify(swappedParsed.keys[29])}`
+    );
+  }
+  console.log('[Test] Mapeo invertido verificado: JSON { release: 0.11, press: 0.5 } -> rtPressRaw=11, rtReleaseRaw=50.');
+
+  // 2. Redondeo correcto con imprecision flotante IEEE-754 (ej: 0.29, 0.57, 0.14) y minimo RT 0.02 mm
   const floatText = buildSyntheticMadKeyboardConfigText({
     patchTog: [{ row: 2, col: 1, apc: 0.29 }],
-    patchRt: [{ row: 2, col: 1, on: 1, release: 0.14, press: 0.57 }],
+    patchRt: [
+      { row: 2, col: 1, on: 1, release: 0.14, press: 0.57 },
+      { row: 0, col: 0, on: 1, release: 0.02, press: 0.02 },
+    ],
   });
   const floatParsed = parseMadKeyboardConfigContent(floatText);
   if (
     floatParsed.keys[29]!.actuationRaw !== 29 ||
-    floatParsed.keys[29]!.rtReleaseRaw !== 14 ||
-    floatParsed.keys[29]!.rtPressRaw !== 57
+    floatParsed.keys[29]!.rtPressRaw !== 14 ||
+    floatParsed.keys[29]!.rtReleaseRaw !== 57 ||
+    floatParsed.keys[0]!.rtPressRaw !== 2 ||
+    floatParsed.keys[0]!.rtReleaseRaw !== 2
   ) {
-    throw new Error(`Error de redondeo IEEE-754: ${JSON.stringify(floatParsed.keys[29])}`);
+    throw new Error(`Error de redondeo IEEE-754 o minimo 0.02: ${JSON.stringify(floatParsed.keys[29])}`);
   }
-  console.log('[Test] Redondeo mm -> centesimas de mm verificado (0.29 -> 29, 0.14 -> 14, 0.57 -> 57).');
+  console.log('[Test] Redondeo mm -> centesimas de mm y minimo 0.02 mm verificados.');
 
   // 3. Errores claros ante formato invalido
   assertThrowsWithMessage(() => parseMadKeyboardConfigContent(''), 'vacio', 'Archivo vacio');
@@ -213,16 +231,16 @@ export function runConfigImportTests(): boolean {
       parseMadKeyboardConfigContent(
         buildSyntheticMadKeyboardConfigText({ patchRt: [{ row: 0, col: 0, on: 1, release: 0.01, press: 0.5 }] })
       ),
-    'Sensibilidad al soltar (release) fuera de limites',
-    'rt release < 0.02'
+    'Sensibilidad al pulsar (campo JSON release) fuera de limites',
+    'rt release (press real) < 0.02'
   );
   assertThrowsWithMessage(
     () =>
       parseMadKeyboardConfigContent(
         buildSyntheticMadKeyboardConfigText({ patchRt: [{ row: 0, col: 0, on: 1, release: 0.5, press: 4.05 }] })
       ),
-    'Sensibilidad al pulsar (press) fuera de limites',
-    'rt press > 4.00'
+    'Sensibilidad al soltar (campo JSON press) fuera de limites',
+    'rt press (release real) > 4.00'
   );
   console.log('[Test] Validacion de limites del hardware (actuacion 10-400, RT 2-400) verificada.');
 

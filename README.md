@@ -26,8 +26,9 @@ Hub de escritorio modular (Electron, React, TypeScript, Tailwind CSS y node-hid 
   - Nomenclatura rigurosa de la matriz actualizada a la disposicion ANSI 60% real (Enter en indice 41; posiciones 40, 43, 54 y huecos de fila 4 marcados sin usar; fila 4 con 8 teclas activas incluyendo `Fn` en indice 69).
   - Suite de pruebas unificada con `pnpm test`.
 - Fase 4a completada (Importador `.mad-keyboard-config` para MAD60HE):
-  - Parser con validacion Zod en `drivers/mad60he/protocol/config-import.ts` para archivos `.mad-keyboard-config` (ASCII decimal -> Base64 -> JSON anidado), verificacion de `protocolVersion` (1.xx) y limites del hardware (recorrido 10-400 cs mm, Rapid Trigger 2-400 cs mm), descartando la fila 5 auxiliar.
-  - Boton "Importar configuracion del teclado" en la vista del dispositivo que carga el perfil, extrae nombres de tecla desde `keyboardAction` capa 0 y muestra origen (`importado de archivo`) y fecha sin escribir al hardware (requiere interruptor explicito para enviar).
+  - Orden `[on, press, release]` de la Tabla 14 confirmado mediante prueba en hardware real.
+  - Parser con validacion Zod en `drivers/mad60he/protocol/config-import.ts` para archivos `.mad-keyboard-config` (ASCII decimal -> Base64 -> JSON anidado), verificacion de `protocolVersion` (1.xx), mapeo de la inversion de nombres del JSON web (`release -> rtPressRaw`, `press -> rtReleaseRaw`) y limites del hardware (recorrido 10-400 cs mm, Rapid Trigger 2-400 cs mm), descartando la fila 5 auxiliar.
+  - Boton "Importar configuracion del teclado" en la vista del dispositivo que carga el perfil, extrae nombres de tecla desde `keyboardAction` capa 0, ofrece control numerico preciso desde `0.02 mm` y muestra origen (`importado de archivo`) y fecha sin escribir al hardware (requiere interruptor explicito para enviar).
 
 ## Como ejecutar
 
