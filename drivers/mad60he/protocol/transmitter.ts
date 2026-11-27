@@ -13,6 +13,161 @@ export interface ChunkTransmissionResult {
   readonly totalChunksSent: number;
 }
 
+export interface ReadRequestOptions {
+  readonly timeoutMs?: number;
+  readonly maxRetriesOnMismatch?: number;
+  readonly label?: string;
+}
+
+export function normalizeIncomingHidReport(incoming: Uint8Array | readonly number[] | Buffer): number[] {
+  const incomingBytes = Array.from(incoming);
+  // Descartar Report ID 0 prependido en Windows si llega como 33 bytes
+  return incomingBytes.length === 33 && incomingBytes[0] === 0
+    ? incomingBytes.slice(1)
+    : incomingBytes;
+}
+
+function writeHidReport32(device: HidDeviceTransport, bytes32: readonly number[]): void {
+  if (bytes32.length !== 32) {
+    throw new Error(`La peticion HID debe tener exactamente 32 bytes (recibido ${bytes32.length})`);
+  }
+  // En Windows node-hid con report ID 0, write() debe recibir 33 bytes: un 0 inicial y luego los 32 bytes
+  const payloadToSend = Buffer.from([0, ...bytes32]);
+  device.write(payloadToSend);
+}
+
+function matchesHeader(bytes: readonly number[], expectedHeader: readonly number[]): boolean {
+  if (bytes.length < expectedHeader.length) {
+    return false;
+  }
+  for (let i = 0; i < expectedHeader.length; i++) {
+    if (bytes[i] !== expectedHeader[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isPeriodicHeartbeatPacket(bytes: readonly number[]): boolean {
+  return (
+    bytes.length === 32 &&
+    (bytes[0] === 3 || bytes[0] === 4) &&
+    bytes[1] === 0 &&
+    bytes[2] === 0 &&
+    bytes[3] === 0 &&
+    bytes[4] === 0
+  );
+}
+
+async function awaitSingleReadResponse(
+  device: HidDeviceTransport,
+  requestBytes: readonly number[],
+  expectedHeader: readonly number[],
+  timeoutMs: number,
+  label: string
+): Promise<number[]> {
+  return new Promise<number[]>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastMismatchedHeader: number[] | null = null;
+
+    const cleanup = () => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      device.removeListener('data', onData);
+    };
+
+    const onData = (incoming: Uint8Array | number[] | Buffer) => {
+      const normalized = normalizeIncomingHidReport(incoming);
+      if (normalized.length !== 32) {
+        // Ignorar reportes de longitud distinta (p. ej. pulsaciones u otras interfaces)
+        return;
+      }
+
+      if (matchesHeader(normalized, expectedHeader)) {
+        cleanup();
+        resolve(normalized);
+        return;
+      }
+
+      // Ignorar keepalive periodicos y registrar cualquier cabecera no coincidente por si la respuesta valida no llega
+      if (!isPeriodicHeartbeatPacket(normalized)) {
+        lastMismatchedHeader = normalized.slice(0, expectedHeader.length);
+      }
+    };
+
+    timer = setTimeout(() => {
+      cleanup();
+      if (lastMismatchedHeader !== null) {
+        reject(
+          new HeaderMismatchError(
+            `Cabecera de respuesta no coincide en ${label}: esperado [${expectedHeader.join(', ')}], recibido [${lastMismatchedHeader.join(', ')}]`,
+            expectedHeader,
+            lastMismatchedHeader
+          )
+        );
+        return;
+      }
+      reject(
+        new Error(
+          `Tiempo de espera agotado (${timeoutMs}ms) esperando respuesta de lectura para ${label}`
+        )
+      );
+    }, timeoutMs);
+
+    device.on('data', onData);
+
+    try {
+      writeHidReport32(device, requestBytes);
+    } catch (err) {
+      cleanup();
+      reject(err);
+    }
+  });
+}
+
+export class HeaderMismatchError extends Error {
+  public readonly expectedHeader: readonly number[];
+  public readonly receivedHeader: readonly number[];
+
+  constructor(message: string, expectedHeader: readonly number[], receivedHeader: readonly number[]) {
+    super(message);
+    this.name = 'HeaderMismatchError';
+    this.expectedHeader = expectedHeader;
+    this.receivedHeader = receivedHeader;
+  }
+}
+
+/**
+ * Envia una peticion de lectura de 32 bytes (33 con Report ID 0) y espera la respuesta cuya cabecera coincida.
+ * Ignora reportes de otras interfaces o pulsaciones normales. Si solo llegan respuestas con cabecera incorrecta,
+ * reintenta una vez por posible interferencia de otra aplicacion abierta (ej. web oficial).
+ */
+export async function sendReadRequestAndAwaitHeader(
+  device: HidDeviceTransport,
+  requestBytes: readonly number[],
+  expectedHeader: readonly number[],
+  options: ReadRequestOptions = {}
+): Promise<number[]> {
+  const timeoutMs = options.timeoutMs ?? 800;
+  const maxRetriesOnMismatch = options.maxRetriesOnMismatch ?? 1;
+  const label = options.label ?? `[${expectedHeader.join(',')}]`;
+
+  let attempts = 0;
+  while (true) {
+    attempts++;
+    try {
+      return await awaitSingleReadResponse(device, requestBytes, expectedHeader, timeoutMs, label);
+    } catch (err) {
+      if (err instanceof HeaderMismatchError && attempts <= maxRetriesOnMismatch) {
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 /**
  * Transmite trozos secuencialmente a un dispositivo HID esperando el eco exacto de cada uno.
  * Si un eco difiere o no llega dentro del tiempo limite, aborta inmediatamente sin reintentos.
@@ -34,11 +189,7 @@ export async function sendChunksWithEchoValidation(
       let timer: ReturnType<typeof setTimeout> | null = null;
 
       const onData = (incoming: Uint8Array | number[]) => {
-        const incomingBytes = Array.from(incoming);
-        // Descartar si el paquete entrante tiene un Report ID prependido (33 bytes con 0 al inicio)
-        const normalized = incomingBytes.length === 33 && incomingBytes[0] === 0
-          ? incomingBytes.slice(1)
-          : incomingBytes;
+        const normalized = normalizeIncomingHidReport(incoming);
 
         if (normalized.length !== chunk.bytes.length) {
           cleanup();
@@ -86,9 +237,7 @@ export async function sendChunksWithEchoValidation(
       device.on('data', onData);
 
       try {
-        // En Windows node-hid con report ID 0, write() debe recibir 33 bytes: un 0 inicial y luego los 32 bytes
-        const payloadToSend = Buffer.from([0, ...chunk.bytes]);
-        device.write(payloadToSend);
+        writeHidReport32(device, chunk.bytes);
       } catch (err) {
         cleanup();
         reject(err);

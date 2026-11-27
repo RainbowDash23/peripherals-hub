@@ -12,6 +12,7 @@ import {
   X,
   FolderOpen,
   FileUp,
+  RefreshCw,
   Shield,
   Send,
 } from 'lucide-react';
@@ -30,6 +31,8 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
   const [lastSentValues, setLastSentValues] = useState<Record<string, unknown>>({});
   const [lastSentAt, setLastSentAt] = useState<number | null>(null);
   const [allowHardwareWrite, setAllowHardwareWrite] = useState<boolean>(false);
+  const [hasHardwareRead, setHasHardwareRead] = useState<boolean>(false);
+  const [isReadingHardware, setIsReadingHardware] = useState<boolean>(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState<boolean>(false);
   const [pendingChanges, setPendingChanges] = useState<readonly DriverChangeDifference[]>([]);
   const [isApplying, setIsApplying] = useState<boolean>(false);
@@ -50,7 +53,32 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     return `${dd}/${mo}/${yyyy} ${formatTime(ts)}`;
   };
 
-  // Cargar estado inicial del driver
+  const applyHardwareStateToView = (values: Record<string, unknown>, announce: boolean) => {
+    setDriverValues(values);
+    setInitialValues(JSON.parse(JSON.stringify(values)));
+    setHasHardwareRead(true);
+
+    if (typeof values['lastSentToHardwareAt'] === 'number') {
+      setLastSentAt(values['lastSentToHardwareAt']);
+      setLastSentValues(JSON.parse(JSON.stringify(values)));
+    }
+
+    if (announce) {
+      const readTs = typeof values['readAt'] === 'number' ? values['readAt'] : Date.now();
+      const ver = typeof values['protocolVersion'] === 'string' ? `v${values['protocolVersion']}` : '';
+      const db = values['deadBand'] as { topRaw?: number; bottomRaw?: number } | null | undefined;
+      const dbDesc =
+        db && typeof db.topRaw === 'number' && typeof db.bottomRaw === 'number'
+          ? `, zona muerta ${(db.topRaw / 100).toFixed(2)}/${(db.bottomRaw / 100).toFixed(2)} mm`
+          : '';
+      setStatusMessage({
+        type: 'success',
+        text: `Configuracion leida del teclado a las ${formatTime(readTs)}${ver ? ` (${ver}${dbDesc})` : ''}.`,
+      });
+    }
+  };
+
+  // Cargar estado inicial del driver y ejecutar lectura automatica al abrir el dispositivo
   useEffect(() => {
     if (!manifest?.id || !window.peripheralsHub) {
       return;
@@ -59,11 +87,14 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     let isMounted = true;
     window.peripheralsHub
       .getDriverState(manifest.id)
-      .then((state) => {
+      .then(async (state) => {
         if (!isMounted) return;
+        let alreadyRead = false;
         if (state && state.values) {
           setDriverValues(state.values);
           setInitialValues(JSON.parse(JSON.stringify(state.values)));
+          alreadyRead = state.values['hasHardwareRead'] === true;
+          setHasHardwareRead(alreadyRead);
           // allowHardwareWrite siempre desactivada por defecto al iniciar la app
           setAllowHardwareWrite(false);
           if (typeof state.values['lastSentToHardwareAt'] === 'number') {
@@ -74,6 +105,30 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
             setLastSentValues({});
           }
         }
+
+        if (manifest.id === 'mad60he' && device.controlPath && !alreadyRead) {
+          setIsReadingHardware(true);
+          try {
+            const hwState = await window.peripheralsHub!.readHardwareProfile(manifest.id);
+            if (!isMounted) return;
+            if (hwState && hwState.values) {
+              applyHardwareStateToView(hwState.values, true);
+            }
+          } catch (readErr: unknown) {
+            if (!isMounted) return;
+            const msg = readErr instanceof Error ? readErr.message : String(readErr);
+            setHasHardwareRead(false);
+            setAllowHardwareWrite(false);
+            setStatusMessage({
+              type: 'error',
+              text: `No se pudo leer automaticamente del teclado: ${msg}. Cierra la web oficial si esta abierta y pulsa "Leer del teclado".`,
+            });
+          } finally {
+            if (isMounted) {
+              setIsReadingHardware(false);
+            }
+          }
+        }
       })
       .catch((err) => {
         console.warn('[DeviceView] No se pudo leer estado inicial del driver:', err);
@@ -82,7 +137,28 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     return () => {
       isMounted = false;
     };
-  }, [manifest?.id, device.id]);
+  }, [manifest?.id, device.id, device.controlPath]);
+
+  // Lectura manual del estado real del teclado (sin requerir interruptor de escritura)
+  const handleReadFromKeyboard = async () => {
+    if (!manifest?.id || !window.peripheralsHub) return;
+    setIsReadingHardware(true);
+    setStatusMessage(null);
+    try {
+      const hwState = await window.peripheralsHub.readHardwareProfile(manifest.id);
+      if (hwState && hwState.values) {
+        applyHardwareStateToView(hwState.values, true);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatusMessage({
+        type: 'error',
+        text: `Error al leer del teclado: ${msg}. Si la web del fabricante esta abierta, cierrala y vuelve a intentar.`,
+      });
+    } finally {
+      setIsReadingHardware(false);
+    }
+  };
 
   const handleValueChange = (capabilityId: string, val: unknown) => {
     setDriverValues((prev) => ({
@@ -185,12 +261,13 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
         keyLabels: driverValues['keyLabels'],
         source: driverValues['source'],
         importedAt: driverValues['importedAt'],
+        readAt: driverValues['readAt'],
         importedFileName: driverValues['importedFileName'],
         protocolVersion: driverValues['protocolVersion'],
         deadBand: driverValues['deadBand'],
         profileName: driverValues['profileName'],
-        allowHardwareWrite,
-        writeToHardware: allowHardwareWrite,
+        allowHardwareWrite: hasHardwareRead && allowHardwareWrite,
+        writeToHardware: hasHardwareRead && allowHardwareWrite,
       };
 
       const res = await window.peripheralsHub.applyDriverSettings(manifest.id, payload);
@@ -250,15 +327,29 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
 
         <div className="flex flex-wrap items-center gap-2">
           {manifest?.id === 'mad60he' && (
-            <button
-              type="button"
-              onClick={handleImportKeyboardConfig}
-              title="Cargar archivo .mad-keyboard-config exportado del driver web oficial"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-raised border border-border-default hover:border-accent hover:text-accent text-text-primary text-xs font-mono transition-colors cursor-pointer"
-            >
-              <FileUp className="w-3.5 h-3.5" />
-              Importar configuracion del teclado
-            </button>
+            <>
+              <button
+                type="button"
+                disabled={!device.controlPath || isReadingHardware || isApplying}
+                onClick={handleReadFromKeyboard}
+                title="Leer configuracion actual directamente del teclado (sin escribir)"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-raised border border-border-default hover:border-accent hover:text-accent text-text-primary text-xs font-mono transition-colors cursor-pointer disabled:opacity-40"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isReadingHardware ? 'animate-spin text-accent' : ''}`} />
+                {isReadingHardware ? 'Leyendo del teclado...' : 'Leer del teclado'}
+              </button>
+
+              <button
+                type="button"
+                disabled={isReadingHardware || isApplying}
+                onClick={handleImportKeyboardConfig}
+                title="Cargar archivo .mad-keyboard-config exportado del driver web oficial"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-raised border border-border-default hover:border-accent hover:text-accent text-text-primary text-xs font-mono transition-colors cursor-pointer disabled:opacity-40"
+              >
+                <FileUp className="w-3.5 h-3.5" />
+                Importar configuracion del teclado
+              </button>
+            </>
           )}
 
           <button
@@ -336,6 +427,14 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
               <Shield className="w-3 h-3" />
               {lastSentAt ? `enviado al teclado a las ${formatTime(lastSentAt)}` : 'solo guardado en el hub'}
             </span>
+            {driverValues['source'] === 'keyboard' && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                Origen: leído del teclado
+                {typeof driverValues['readAt'] === 'number'
+                  ? ` (${formatDateTime(driverValues['readAt'] as number)})`
+                  : ''}
+              </span>
+            )}
             {driverValues['source'] === 'imported-file' && (
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-sky-500/15 text-sky-300 border border-sky-500/30">
                 Origen: importado de archivo
@@ -381,36 +480,56 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
           </p>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0 border-t md:border-t-0 md:border-l border-border-subtle pt-3 md:pt-0 md:pl-4">
+        <div className="flex flex-col items-start md:items-end gap-1.5 shrink-0 border-t md:border-t-0 md:border-l border-border-subtle pt-3 md:pt-0 md:pl-4">
           <button
             type="button"
             role="switch"
             aria-checked={allowHardwareWrite}
-            onClick={() => setAllowHardwareWrite((prev) => !prev)}
-            className={`inline-flex items-center gap-2.5 px-3 py-1.5 rounded border text-xs font-mono font-medium transition-all cursor-pointer select-none ${
-              allowHardwareWrite
-                ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 hover:bg-amber-500/25'
-                : 'bg-surface-base border-border-default text-zinc-400 hover:border-border-subtle hover:text-text-secondary'
+            disabled={!hasHardwareRead || isReadingHardware}
+            onClick={() => {
+              if (!hasHardwareRead) return;
+              setAllowHardwareWrite((prev) => !prev);
+            }}
+            title={
+              hasHardwareRead
+                ? 'Habilitar o deshabilitar el envio real al teclado'
+                : 'Lee primero el estado actual del teclado antes de habilitar escrituras'
+            }
+            className={`inline-flex items-center gap-2.5 px-3 py-1.5 rounded border text-xs font-mono font-medium transition-all select-none ${
+              !hasHardwareRead || isReadingHardware
+                ? 'bg-surface-base border-border-subtle text-zinc-500 opacity-60 cursor-not-allowed'
+                : allowHardwareWrite
+                ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 hover:bg-amber-500/25 cursor-pointer'
+                : 'bg-surface-base border-border-default text-zinc-400 hover:border-border-subtle hover:text-text-secondary cursor-pointer'
             }`}
           >
             <div
               className={`w-7 h-4 flex items-center rounded-full p-0.5 transition-colors ${
-                allowHardwareWrite ? 'bg-amber-400' : 'bg-zinc-700'
+                allowHardwareWrite && hasHardwareRead ? 'bg-amber-400' : 'bg-zinc-700'
               }`}
             >
               <div
                 className={`bg-zinc-950 w-3 h-3 rounded-full shadow-xs transform transition-transform ${
-                  allowHardwareWrite ? 'translate-x-3' : 'translate-x-0'
+                  allowHardwareWrite && hasHardwareRead ? 'translate-x-3' : 'translate-x-0'
                 }`}
               />
             </div>
             <span>
               Escritura al teclado:{' '}
-              <strong className={allowHardwareWrite ? 'text-amber-400 font-bold' : 'text-zinc-300 font-normal'}>
-                {allowHardwareWrite ? 'ACTIVADA' : 'DESACTIVADA'}
+              <strong
+                className={
+                  allowHardwareWrite && hasHardwareRead ? 'text-amber-400 font-bold' : 'text-zinc-300 font-normal'
+                }
+              >
+                {allowHardwareWrite && hasHardwareRead ? 'ACTIVADA' : 'DESACTIVADA'}
               </strong>
             </span>
           </button>
+          {manifest?.id === 'mad60he' && !hasHardwareRead && (
+            <span className="text-[11px] font-mono text-amber-300/90 max-w-xs md:text-right leading-snug">
+              Envio bloqueado: lee primero el teclado con &quot;Leer del teclado&quot; para sincronizar el estado real antes de escribir.
+            </span>
+          )}
         </div>
       </div>
 
@@ -447,7 +566,7 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
                     savedValue={savedVal}
                     lastSentValue={lastSentVal}
                     keyLabels={Array.isArray(driverValues['keyLabels']) ? (driverValues['keyLabels'] as string[]) : null}
-                    disabled={isApplying}
+                    disabled={isApplying || isReadingHardware}
                     onChange={(newVal) => handleValueChange(cap.id, newVal)}
                   />
                 </div>

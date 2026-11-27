@@ -3,6 +3,7 @@ import manifestData from './manifest.json' with { type: 'json' };
 import { loadProfile, saveProfile } from './protocol/storage.js';
 import { encodeTable13, encodeTable14, type EncodedReport } from './protocol/codec.js';
 import { sendChunksWithEchoValidation } from './protocol/transmitter.js';
+import { readMad60HeProfile } from './protocol/reader.js';
 import {
   ACTUATION_MAX_RAW,
   ACTUATION_MIN_RAW,
@@ -52,12 +53,17 @@ export class Mad60HeDriver implements Driver {
   private connection: DeviceConnection | null = null;
   private profile: KeyboardProfile;
   private allowHardwareWrite: boolean = false;
+  private hasHardwareRead: boolean = false;
+  private activeReadPromise: Promise<DeviceState> | null = null;
 
   constructor() {
     this.profile = loadProfile();
   }
 
   public isHardwareWriteAllowed(): boolean {
+    if (!this.hasHardwareRead) {
+      return false;
+    }
     const envVal = process.env['PERIPHERALS_HUB_ALLOW_HARDWARE_WRITE'];
     if (envVal === '1' || envVal === 'true') {
       return true;
@@ -70,8 +76,11 @@ export class Mad60HeDriver implements Driver {
   }
 
   public async connect(connection: DeviceConnection): Promise<void> {
+    if (this.connection?.path !== connection.path) {
+      this.hasHardwareRead = false;
+    }
     this.connection = connection;
-    // Solo lectura pasiva por defecto.
+    // Solo lectura pasiva/lectura segura del estado actual; nunca escrituras automaticas.
   }
 
   public async readState(): Promise<DeviceState> {
@@ -82,6 +91,8 @@ export class Mad60HeDriver implements Driver {
         profileName: this.profile.name,
         source: this.profile.source ?? 'default',
         importedAt: this.profile.importedAt ?? null,
+        readAt: this.profile.readAt ?? null,
+        hasHardwareRead: this.hasHardwareRead,
         importedFileName: this.profile.importedFileName ?? null,
         protocolVersion: this.profile.protocolVersion ?? null,
         deadBand: this.profile.deadBand ?? null,
@@ -91,6 +102,60 @@ export class Mad60HeDriver implements Driver {
         updatedAt: this.profile.updatedAt,
       },
     };
+  }
+
+  /**
+   * Lee en serie la configuracion real del teclado (version, zona muerta, tablas 13/14 y keymap)
+   * sin emitir escrituras y sin requerir el interruptor de escritura.
+   */
+  public async readFromHardware(): Promise<DeviceState> {
+    if (this.activeReadPromise) {
+      return this.activeReadPromise;
+    }
+
+    const executeRead = async (): Promise<DeviceState> => {
+      if (!this.connection?.path) {
+        throw new Error('No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para leer el teclado.');
+      }
+
+      console.log(`[Mad60HeDriver] Leyendo configuracion en vivo del teclado en ${this.connection.path}...`);
+      const HID = await import('node-hid');
+      const device = new HID.default.HID(this.connection.path);
+
+      try {
+        const liveProfile = await readMad60HeProfile(device, { timeoutMs: 800, maxRetriesOnMismatch: 1 });
+        this.hasHardwareRead = true;
+        this.profile = {
+          version: liveProfile.version,
+          name: liveProfile.name,
+          source: 'keyboard',
+          readAt: liveProfile.readAt,
+          updatedAt: liveProfile.updatedAt,
+          protocolVersion: liveProfile.protocolVersion,
+          deadBand: liveProfile.deadBand,
+          keyLabels: liveProfile.keyLabels,
+          keys: liveProfile.keys,
+          lastSentToHardwareAt: this.profile.lastSentToHardwareAt,
+        };
+        saveProfile(this.profile);
+        console.log(
+          `[Mad60HeDriver] Lectura completa del teclado exitosa (v${liveProfile.protocolVersion}, deadband ${liveProfile.deadBand.topRaw}/${liveProfile.deadBand.bottomRaw} cs mm).`
+        );
+        return this.readState();
+      } finally {
+        try {
+          device.close();
+        } catch {
+          // Ignorar cierre
+        }
+      }
+    };
+
+    this.activeReadPromise = executeRead().finally(() => {
+      this.activeReadPromise = null;
+    });
+
+    return this.activeReadPromise;
   }
 
   /**
@@ -217,7 +282,7 @@ export class Mad60HeDriver implements Driver {
     const now = Date.now();
     const rawSource = partialState['source'];
     const validSource: ProfileOrigin =
-      rawSource === 'imported-file' || rawSource === 'capture' || rawSource === 'default'
+      rawSource === 'keyboard' || rawSource === 'imported-file' || rawSource === 'capture' || rawSource === 'default'
         ? rawSource
         : this.profile.source ?? 'default';
 
@@ -234,6 +299,7 @@ export class Mad60HeDriver implements Driver {
         : this.profile.name,
       source: validSource,
       importedAt: typeof partialState['importedAt'] === 'number' ? partialState['importedAt'] : this.profile.importedAt,
+      readAt: typeof partialState['readAt'] === 'number' ? partialState['readAt'] : this.profile.readAt,
       importedFileName:
         typeof partialState['importedFileName'] === 'string'
           ? partialState['importedFileName']
@@ -250,7 +316,13 @@ export class Mad60HeDriver implements Driver {
     saveProfile(this.profile);
     console.log(`[Mad60HeDriver] Perfil guardado localmente (${plan.changes.length} cambios registrados).`);
 
-    const hardwareEnabled = this.isHardwareWriteAllowed() || partialState['writeToHardware'] === true;
+    const hardwareRequested = partialState['writeToHardware'] === true;
+    const hardwareEnabled = this.isHardwareWriteAllowed() || (hardwareRequested && this.hasHardwareRead);
+    if (hardwareRequested && !this.hasHardwareRead) {
+      throw new Error(
+        'Antes de enviar cambios al teclado debes leer su configuracion actual desde el hardware (pulsa "Leer del teclado").'
+      );
+    }
     if (hardwareEnabled) {
       if (!this.connection?.path) {
         throw new Error('No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para emitir escrituras al hardware');
@@ -305,6 +377,7 @@ export class Mad60HeDriver implements Driver {
 
   public async disconnect(): Promise<void> {
     this.connection = null;
+    this.hasHardwareRead = false;
   }
 }
 

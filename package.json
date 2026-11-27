@@ -6,7 +6,7 @@
   "scripts": {
     "list-hid": "tsx scripts/list-hid.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx drivers/mad60he/protocol/test-codec.ts && tsx drivers/mad60he/protocol/test-transmitter.ts && tsx drivers/mad60he/protocol/test-config-import.ts",
+    "test": "tsx drivers/mad60he/protocol/test-codec.ts && tsx drivers/mad60he/protocol/test-transmitter.ts && tsx drivers/mad60he/protocol/test-config-import.ts && tsx drivers/mad60he/protocol/test-reader.ts",
     "import-profile": "tsx scripts/import-capture.ts",
     "build:drivers": "esbuild drivers/mad60he/index.ts --bundle --platform=node --format=esm --outfile=drivers/mad60he/index.js --external:node-hid && esbuild drivers/ajazz-aj159-pro/index.ts --bundle --platform=node --format=esm --outfile=drivers/ajazz-aj159-pro/index.js --external:node-hid",
     "build:renderer": "vite build",

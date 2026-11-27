@@ -29,6 +29,7 @@ Hub de escritorio modular (Electron, React, TypeScript, Tailwind CSS y node-hid 
   - Orden `[on, press, release]` de la Tabla 14 confirmado mediante prueba en hardware real.
   - Parser con validacion Zod en `drivers/mad60he/protocol/config-import.ts` para archivos `.mad-keyboard-config` (ASCII decimal -> Base64 -> JSON anidado), verificacion de `protocolVersion` (1.xx), mapeo de la inversion de nombres del JSON web (`release -> rtPressRaw`, `press -> rtReleaseRaw`) y limites del hardware (recorrido 10-400 cs mm, Rapid Trigger 2-400 cs mm), descartando la fila 5 auxiliar.
   - Boton "Importar configuracion del teclado" en la vista del dispositivo que carga el perfil, extrae nombres de tecla desde `keyboardAction` capa 0, ofrece control numerico preciso desde `0.02 mm` y muestra origen (`importado de archivo`) y fecha sin escribir al hardware (requiere interruptor explicito para enviar).
+- Fase 4c completada (Lectura en vivo del MAD60HE): lectura automatica al abrir el dispositivo y boton "Leer del teclado" sin habilitar escritura, bloqueando envios mientras no exista lectura previa; cerrar la web del fabricante (`hub.fgg.com.cn`) mientras se usa el hub para evitar interferencias con las respuestas HID.
 
 ## Como ejecutar
 

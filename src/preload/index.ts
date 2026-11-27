@@ -74,6 +74,7 @@ export interface PeripheralsHubApi {
   onLabReport: (callback: (report: HidReportEvent) => void) => () => void;
   onLabError: (callback: (error: string) => void) => () => void;
   getDriverState: (driverId: string) => Promise<{ connected: boolean; values: Record<string, unknown> }>;
+  readHardwareProfile: (driverId: string) => Promise<{ connected: boolean; values: Record<string, unknown> }>;
   prepareDriverApply: (driverId: string, partialState: Record<string, unknown>) => Promise<DriverPreparePlan>;
   applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) => Promise<DriverApplyResult>;
   importDriverCapture: (driverId: string) => Promise<DriverImportResult | null>;
@@ -107,6 +108,7 @@ export const api: PeripheralsHubApi = {
     };
   },
   getDriverState: (driverId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRIVER_READ_STATE, driverId),
+  readHardwareProfile: (driverId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRIVER_READ_HARDWARE, driverId),
   prepareDriverApply: (driverId: string, partialState: Record<string, unknown>) =>
     ipcRenderer.invoke(IPC_CHANNELS.DRIVER_PREPARE_APPLY, driverId, partialState),
   applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) =>

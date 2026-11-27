@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
   PERIPHERALS_UPDATED: 'peripherals:updated',
   DRIVERS_GET_ALL: 'drivers:get-all',
   DRIVER_READ_STATE: 'driver:read-state',
+  DRIVER_READ_HARDWARE: 'driver:read-hardware',
   DRIVER_PREPARE_APPLY: 'driver:prepare-apply',
   DRIVER_APPLY: 'driver:apply',
   DRIVER_IMPORT_CAPTURE: 'driver:import-capture',

@@ -20,7 +20,7 @@ export interface KeyConfig {
   readonly rtReleaseRaw: number;
 }
 
-export type ProfileOrigin = 'default' | 'capture' | 'imported-file';
+export type ProfileOrigin = 'default' | 'capture' | 'imported-file' | 'keyboard';
 
 export interface DeadBandConfig {
   readonly topRaw: number;
@@ -34,6 +34,7 @@ export interface KeyboardProfile {
   readonly lastSentToHardwareAt?: number;
   readonly source?: ProfileOrigin;
   readonly importedAt?: number;
+  readonly readAt?: number;
   readonly importedFileName?: string;
   readonly protocolVersion?: string;
   readonly deadBand?: DeadBandConfig;

@@ -83,6 +83,17 @@ function setupIpc(): void {
     return driver.readState();
   });
 
+  ipcMain.handle(IPC_CHANNELS.DRIVER_READ_HARDWARE, async (_event, driverId: string) => {
+    const driver = await deviceManager.getDriverInstance(driverId);
+    if (!driver) {
+      throw new Error(`Driver no encontrado: ${driverId}`);
+    }
+    if ('readFromHardware' in driver && typeof (driver as { readFromHardware?: unknown }).readFromHardware === 'function') {
+      return (driver as unknown as { readFromHardware: () => Promise<unknown> }).readFromHardware();
+    }
+    throw new Error(`Lectura de hardware no soportada para el driver: ${driverId}`);
+  });
+
   ipcMain.handle(
     IPC_CHANNELS.DRIVER_PREPARE_APPLY,
     async (_event, driverId: string, partialState: Record<string, unknown>) => {
