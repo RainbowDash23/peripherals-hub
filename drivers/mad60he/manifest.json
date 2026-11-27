@@ -28,9 +28,9 @@
         "rowLabels": [
           ["Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
           ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"],
-          ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Enter", "Tecla 41"],
-          ["Tecla 42", "Tecla 43", "Tecla 44", "Tecla 45", "Tecla 46", "Tecla 47", "Tecla 48", "Tecla 49", "Tecla 50", "Tecla 51", "Tecla 52", "Tecla 53", "Tecla 54", "Tecla 55"],
-          ["Tecla 56", "Tecla 57", "Tecla 58", "Tecla 59", "Tecla 60", "Tecla 61", "Tecla 62", "Tecla 63", "Tecla 64", "Tecla 65", "Tecla 66", "Tecla 67", "Tecla 68", "Tecla 69"]
+          ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Sin usar", "Enter"],
+          ["LShift", "Sin usar", "Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "Sin usar", "RShift"],
+          ["LCtrl", "Win", "LAlt", "Sin usar", "Sin usar", "Sin usar", "Space", "Sin usar", "Sin usar", "Sin usar", "RAlt", "Menu", "RCtrl", "Fn"]
         ],
         "fields": [
           {

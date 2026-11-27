@@ -110,10 +110,13 @@ export function importProfileFromCaptureData(
     description: `Tabla 13: ${t13Desc}, Tabla 14: ${t14Desc}`,
   };
 
+  const importedAt = Date.now();
   return {
     version: '1.0.0',
     name: 'Perfil Importado de Captura',
-    updatedAt: Date.now(),
+    source: 'capture',
+    importedAt,
+    updatedAt: importedAt,
     keys,
     summary,
   };

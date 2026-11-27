@@ -29,9 +29,9 @@ var manifest_default = {
         rowLabels: [
           ["Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
           ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"],
-          ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Enter", "Tecla 41"],
-          ["Tecla 42", "Tecla 43", "Tecla 44", "Tecla 45", "Tecla 46", "Tecla 47", "Tecla 48", "Tecla 49", "Tecla 50", "Tecla 51", "Tecla 52", "Tecla 53", "Tecla 54", "Tecla 55"],
-          ["Tecla 56", "Tecla 57", "Tecla 58", "Tecla 59", "Tecla 60", "Tecla 61", "Tecla 62", "Tecla 63", "Tecla 64", "Tecla 65", "Tecla 66", "Tecla 67", "Tecla 68", "Tecla 69"]
+          ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Sin usar", "Enter"],
+          ["LShift", "Sin usar", "Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", "Sin usar", "RShift"],
+          ["LCtrl", "Win", "LAlt", "Sin usar", "Sin usar", "Sin usar", "Space", "Sin usar", "Sin usar", "Sin usar", "RAlt", "Menu", "RCtrl", "Fn"]
         ],
         fields: [
           {
@@ -79,6 +79,10 @@ import { dirname, join } from "node:path";
 
 // drivers/mad60he/protocol/profile.ts
 var TOTAL_USEFUL_KEYS = 70;
+var ACTUATION_MIN_RAW = 10;
+var ACTUATION_MAX_RAW = 400;
+var RT_MIN_RAW = 2;
+var RT_MAX_RAW = 400;
 var DEFAULT_KEY_CONFIG = {
   actuationRaw: 150,
   // 1.50 mm
@@ -93,6 +97,7 @@ function createDefaultProfile(name = "Predeterminado") {
   return {
     version: "1.0.0",
     name,
+    source: "default",
     updatedAt: Date.now(),
     keys
   };
@@ -278,6 +283,23 @@ async function sendChunksWithEchoValidation(device, chunks, timeoutMs = 1e3) {
   };
 }
 
+// drivers/mad60he/protocol/keymap.ts
+var UNUSED_KEY_LABEL = "Sin usar";
+var DEFAULT_MAD60HE_ROW_LABELS = [
+  ["Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
+  ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"],
+  ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", UNUSED_KEY_LABEL, "Enter"],
+  ["LShift", UNUSED_KEY_LABEL, "Z", "X", "C", "V", "B", "N", "M", ",", ".", "/", UNUSED_KEY_LABEL, "RShift"],
+  ["LCtrl", "Win", "LAlt", UNUSED_KEY_LABEL, UNUSED_KEY_LABEL, UNUSED_KEY_LABEL, "Space", UNUSED_KEY_LABEL, UNUSED_KEY_LABEL, UNUSED_KEY_LABEL, "RAlt", "Menu", "RCtrl", "Fn"]
+];
+var DEFAULT_MAD60HE_KEY_LABELS = DEFAULT_MAD60HE_ROW_LABELS.flat();
+function getKeyLabelAtIndex(index, customLabels) {
+  if (customLabels && customLabels[index]) {
+    return customLabels[index];
+  }
+  return DEFAULT_MAD60HE_KEY_LABELS[index] ?? `Tecla ${index}`;
+}
+
 // drivers/mad60he/index.ts
 var manifest = manifest_default;
 var Mad60HeDriver = class {
@@ -307,6 +329,12 @@ var Mad60HeDriver = class {
       values: {
         keys: this.profile.keys,
         profileName: this.profile.name,
+        source: this.profile.source ?? "default",
+        importedAt: this.profile.importedAt ?? null,
+        importedFileName: this.profile.importedFileName ?? null,
+        protocolVersion: this.profile.protocolVersion ?? null,
+        deadBand: this.profile.deadBand ?? null,
+        keyLabels: this.profile.keyLabels ?? null,
         allowHardwareWrite: this.isHardwareWriteAllowed(),
         lastSentToHardwareAt: this.profile.lastSentToHardwareAt,
         updatedAt: this.profile.updatedAt
@@ -317,34 +345,34 @@ var Mad60HeDriver = class {
    * Calcula el plan de cambios comparando el estado actual con el solicitado,
    * validando estrictamente los rangos de valores observados en las capturas.
    */
-  prepareApply(newKeys) {
+  prepareApply(newKeys, keyLabels) {
     if (newKeys.length !== TOTAL_USEFUL_KEYS) {
       throw new Error(`Se requieren exactamente ${TOTAL_USEFUL_KEYS} teclas en el perfil`);
     }
+    const effectiveLabels = keyLabels ?? this.profile.keyLabels;
     const changes = [];
-    const labels = [
-      ["Esc", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Backspace"],
-      ["Tab", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "[", "]", "\\"],
-      ["Caps", "A", "S", "D", "F", "G", "H", "J", "K", "L", ";", "'", "Enter", "Tecla 41"]
-    ];
     for (let i = 0; i < TOTAL_USEFUL_KEYS; i++) {
       const cur = this.profile.keys[i] ?? { actuationRaw: 150, rtEnabled: 0, rtPressRaw: 50, rtReleaseRaw: 50 };
       const next = newKeys[i];
-      if (next.actuationRaw < 10 || next.actuationRaw > 400) {
-        throw new Error(`Valor de actuacion fuera de rango valido (10 a 400 cs mm) en tecla ${i}: ${next.actuationRaw}`);
+      if (next.actuationRaw < ACTUATION_MIN_RAW || next.actuationRaw > ACTUATION_MAX_RAW) {
+        throw new Error(
+          `Valor de actuacion fuera de rango valido (${ACTUATION_MIN_RAW} a ${ACTUATION_MAX_RAW} cs mm) en tecla ${i}: ${next.actuationRaw}`
+        );
       }
       if (next.rtEnabled !== 0 && next.rtEnabled !== 1) {
         throw new Error(`Estado de Rapid Trigger invalido en tecla ${i}: ${next.rtEnabled}`);
       }
-      if (next.rtPressRaw < 2 || next.rtPressRaw > 400) {
-        throw new Error(`Sensibilidad de pulsacion RT fuera de rango valido (2 a 400 cs mm) en tecla ${i}: ${next.rtPressRaw}`);
+      if (next.rtPressRaw < RT_MIN_RAW || next.rtPressRaw > RT_MAX_RAW) {
+        throw new Error(
+          `Sensibilidad de pulsacion RT fuera de rango valido (${RT_MIN_RAW} a ${RT_MAX_RAW} cs mm) en tecla ${i}: ${next.rtPressRaw}`
+        );
       }
-      if (next.rtReleaseRaw < 2 || next.rtReleaseRaw > 400) {
-        throw new Error(`Sensibilidad de rearme RT fuera de rango valido (2 a 400 cs mm) en tecla ${i}: ${next.rtReleaseRaw}`);
+      if (next.rtReleaseRaw < RT_MIN_RAW || next.rtReleaseRaw > RT_MAX_RAW) {
+        throw new Error(
+          `Sensibilidad de rearme RT fuera de rango valido (${RT_MIN_RAW} a ${RT_MAX_RAW} cs mm) en tecla ${i}: ${next.rtReleaseRaw}`
+        );
       }
-      const row = Math.floor(i / 14);
-      const col = i % 14;
-      const keyLabel = row < 3 && labels[row]?.[col] ? labels[row][col] : `Tecla ${i}`;
+      const keyLabel = getKeyLabelAtIndex(i, effectiveLabels);
       if (cur.actuationRaw !== next.actuationRaw) {
         changes.push({
           index: i,
@@ -415,10 +443,22 @@ var Mad60HeDriver = class {
         message: "No se enviaron teclas para modificar."
       };
     }
-    const plan = this.prepareApply(partialState["keys"]);
+    const nextLabels = Array.isArray(partialState["keyLabels"]) && partialState["keyLabels"].length === TOTAL_USEFUL_KEYS ? partialState["keyLabels"] : this.profile.keyLabels;
+    const plan = this.prepareApply(partialState["keys"], nextLabels);
     const now = Date.now();
+    const rawSource = partialState["source"];
+    const validSource = rawSource === "imported-file" || rawSource === "capture" || rawSource === "default" ? rawSource : this.profile.source ?? "default";
+    const rawDeadBand = partialState["deadBand"];
+    const validDeadBand = rawDeadBand && typeof rawDeadBand.topRaw === "number" && typeof rawDeadBand.bottomRaw === "number" ? rawDeadBand : this.profile.deadBand;
     this.profile = {
       ...this.profile,
+      name: typeof partialState["profileName"] === "string" && partialState["profileName"].trim().length > 0 ? partialState["profileName"].trim() : this.profile.name,
+      source: validSource,
+      importedAt: typeof partialState["importedAt"] === "number" ? partialState["importedAt"] : this.profile.importedAt,
+      importedFileName: typeof partialState["importedFileName"] === "string" ? partialState["importedFileName"] : this.profile.importedFileName,
+      protocolVersion: typeof partialState["protocolVersion"] === "string" ? partialState["protocolVersion"] : this.profile.protocolVersion,
+      deadBand: validDeadBand,
+      keyLabels: nextLabels,
       updatedAt: now,
       keys: partialState["keys"]
     };

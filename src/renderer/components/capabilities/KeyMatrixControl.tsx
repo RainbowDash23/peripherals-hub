@@ -16,6 +16,7 @@ interface KeyMatrixControlProps {
   readonly value: unknown;
   readonly savedValue?: unknown;
   readonly lastSentValue?: unknown;
+  readonly keyLabels?: readonly string[] | null;
   readonly onChange?: (value: unknown) => void;
   readonly disabled?: boolean;
 }
@@ -25,6 +26,7 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
   value,
   savedValue,
   lastSentValue,
+  keyLabels,
   onChange,
   disabled = false,
 }) => {
@@ -67,10 +69,30 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
     }
   };
 
+  const resolveLabelAt = (idx: number): string => {
+    if (Array.isArray(keyLabels) && typeof keyLabels[idx] === 'string' && keyLabels[idx]!.length > 0) {
+      return keyLabels[idx]!;
+    }
+    const r = Math.floor(idx / cols);
+    const c = idx % cols;
+    return rowLabels[r]?.[c] ?? `Tecla ${idx}`;
+  };
+
+  const isUnusedAt = (idx: number): boolean => {
+    const lbl = resolveLabelAt(idx).trim().toLowerCase();
+    return lbl === 'sin usar';
+  };
+
+  const activeKeyCount = Array.from({ length: totalKeys }, (_, i) => i).filter((i) => !isUnusedAt(i)).length;
+
   const selectAll = () => {
     if (disabled) return;
     const all = new Set<number>();
-    for (let i = 0; i < totalKeys; i++) all.add(i);
+    for (let i = 0; i < totalKeys; i++) {
+      if (!isUnusedAt(i)) {
+        all.add(i);
+      }
+    }
     setSelectedIndices(all);
   };
 
@@ -106,7 +128,7 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3">
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-text-primary">
-            Seleccionadas: <strong className="text-accent">{selectedIndices.size}</strong> de {totalKeys} teclas
+            Seleccionadas: <strong className="text-accent">{selectedIndices.size}</strong> de {activeKeyCount} teclas activas
           </span>
           <span className="text-xs text-text-muted">(Usa Shift/Ctrl para seleccion multiple)</span>
         </div>
@@ -169,9 +191,11 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
           {Array.from({ length: totalKeys }, (_, idx) => {
             const r = Math.floor(idx / cols);
             const c = idx % cols;
-            const rawLabel = rowLabels[r]?.[c] ?? `Tecla ${idx}`;
+            const rawLabel = resolveLabelAt(idx);
+            const isUnused = rawLabel.trim().toLowerCase() === 'sin usar';
             const isUnidentified = /^Tecla\s+\d+$/i.test(rawLabel) || rawLabel.toLowerCase() === 'sin identificar';
             const keyLabel = isUnidentified ? `Tecla ${idx}` : rawLabel;
+            const isSpecialKey = !isUnused && ((r === rows - 1 && c === cols - 1) || keyLabel === 'Fn' || keyLabel.startsWith('Esp_'));
             const isSelected = selectedIndices.has(idx);
 
             const keyData = matrixState[idx] ?? {
@@ -183,13 +207,14 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
 
             const savedKeyData = savedMatrixState[idx];
             const isPending =
+              !isUnused &&
               savedKeyData !== undefined &&
               (keyData.actuationRaw !== savedKeyData.actuationRaw ||
                 keyData.rtEnabled !== savedKeyData.rtEnabled ||
                 keyData.rtPressRaw !== savedKeyData.rtPressRaw ||
                 keyData.rtReleaseRaw !== savedKeyData.rtReleaseRaw);
 
-            const isCustom = keyData.actuationRaw !== 150 || keyData.rtEnabled === 1;
+            const isCustom = !isUnused && (keyData.actuationRaw !== 150 || keyData.rtEnabled === 1);
 
             return (
               <button
@@ -197,12 +222,22 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                 type="button"
                 disabled={disabled}
                 onClick={(e) => toggleSelectKey(idx, e)}
-                title={`Tecla ${keyLabel} (idx ${idx})${isPending ? ' - Pendiente de aplicar' : ''}`}
+                title={
+                  isUnused
+                    ? `Posicion sin switch en layout ANSI (idx ${idx})`
+                    : isSpecialKey
+                    ? `Tecla especial de capa: ${keyLabel} (idx ${idx})${isPending ? ' - Pendiente de aplicar' : ''}`
+                    : `Tecla ${keyLabel} (idx ${idx})${isPending ? ' - Pendiente de aplicar' : ''}`
+                }
                 className={`flex flex-col items-center justify-between p-1.5 h-16 rounded border text-left font-mono transition-all cursor-pointer relative ${
                   isSelected
                     ? 'border-accent bg-accent/20 text-text-primary shadow-xs ring-1 ring-accent'
+                    : isUnused
+                    ? 'border-dashed border-border-subtle/50 bg-surface-base/30 text-text-muted/60 hover:border-border-subtle'
                     : isPending
                     ? 'border-amber-400/80 bg-amber-500/10 text-text-primary ring-1 ring-amber-400/40'
+                    : isSpecialKey
+                    ? 'border-sky-500/40 bg-sky-500/5 hover:border-sky-400/70 text-text-primary'
                     : isCustom
                     ? 'border-accent/40 bg-surface-base hover:border-accent/80 text-text-primary'
                     : 'border-border-subtle bg-surface-base/80 hover:border-border-default text-text-secondary'
@@ -211,7 +246,13 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                 <div className="w-full flex items-center justify-between gap-1">
                   <span
                     className={`font-semibold whitespace-nowrap leading-none ${
-                      keyLabel.length > 6 ? 'text-[9px]' : keyLabel.length > 4 ? 'text-[10px]' : 'text-[11px]'
+                      isUnused
+                        ? 'text-[9px] font-normal'
+                        : keyLabel.length > 6
+                        ? 'text-[9px]'
+                        : keyLabel.length > 4
+                        ? 'text-[10px]'
+                        : 'text-[11px]'
                     }`}
                   >
                     {keyLabel}
@@ -223,6 +264,11 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                         title="Cambio pendiente de aplicar"
                       />
                     )}
+                    {isSpecialKey && (
+                      <span className="text-[8px] px-1 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30 leading-tight">
+                        ESP
+                      </span>
+                    )}
                     {!isUnidentified && (
                       <span className="text-[9px] text-text-muted leading-none shrink-0">{idx}</span>
                     )}
@@ -230,7 +276,9 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                 </div>
 
                 <div className="w-full text-[9px] tabular-nums truncate text-center">
-                  {viewMode === 'actuation' ? (
+                  {isUnused ? (
+                    <span className="text-text-muted/50">-</span>
+                  ) : viewMode === 'actuation' ? (
                     <span>
                       {((keyData.actuationRaw ?? 150) / 100).toFixed(2)} mm
                       {keyData.rtEnabled === 1 && (

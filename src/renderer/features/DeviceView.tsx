@@ -11,6 +11,7 @@ import {
   AlertCircle,
   X,
   FolderOpen,
+  FileUp,
   Shield,
   Send,
 } from 'lucide-react';
@@ -39,6 +40,14 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     const hh = d.getHours().toString().padStart(2, '0');
     const mm = d.getMinutes().toString().padStart(2, '0');
     return `${hh}:${mm}`;
+  };
+
+  const formatDateTime = (ts: number): string => {
+    const d = new Date(ts);
+    const dd = d.getDate().toString().padStart(2, '0');
+    const mo = (d.getMonth() + 1).toString().padStart(2, '0');
+    const yyyy = d.getFullYear();
+    return `${dd}/${mo}/${yyyy} ${formatTime(ts)}`;
   };
 
   // Cargar estado inicial del driver
@@ -91,10 +100,14 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     try {
       const imported = await window.peripheralsHub.importDriverCapture(manifest.id);
       if (imported && imported.keys) {
+        const now = imported.importedAt ?? Date.now();
         setDriverValues((prev) => ({
           ...prev,
           keys: imported.keys,
           analogMatrix: imported.keys,
+          source: 'capture',
+          importedAt: now,
+          importedFileName: null,
         }));
         const summaryDesc = imported.summary?.description ?? `${imported.keys.length} teclas`;
         setStatusMessage({
@@ -108,6 +121,35 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     }
   };
 
+  // Importar exportacion oficial .mad-keyboard-config (solo carga local en borrador, nunca escribe al hardware)
+  const handleImportKeyboardConfig = async () => {
+    if (!manifest?.id || !window.peripheralsHub) return;
+    try {
+      const imported = await window.peripheralsHub.importKeyboardConfig(manifest.id);
+      if (imported && imported.keys) {
+        setDriverValues((prev) => ({
+          ...prev,
+          keys: imported.keys,
+          analogMatrix: imported.keys,
+          keyLabels: imported.keyLabels,
+          source: imported.source,
+          importedAt: imported.importedAt,
+          importedFileName: imported.importedFileName,
+          protocolVersion: imported.protocolVersion,
+          deadBand: imported.deadBand,
+          profileName: imported.name,
+        }));
+        setStatusMessage({
+          type: 'success',
+          text: `Archivo importado (${imported.importedFileName}): ${imported.summary.description}. Perfil cargado en borrador sin enviar al teclado.`,
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatusMessage({ type: 'error', text: `Error al importar configuracion: ${msg}` });
+    }
+  };
+
   // Solicitar preparacion de aplicacion y calculo de diferencias
   const handleOpenConfirm = async () => {
     if (!manifest?.id || !window.peripheralsHub) {
@@ -117,6 +159,7 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     try {
       const payload = {
         keys: driverValues['analogMatrix'] ?? driverValues['keys'],
+        keyLabels: driverValues['keyLabels'],
         allowHardwareWrite,
       };
 
@@ -139,6 +182,13 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     try {
       const payload = {
         keys: driverValues['analogMatrix'] ?? driverValues['keys'],
+        keyLabels: driverValues['keyLabels'],
+        source: driverValues['source'],
+        importedAt: driverValues['importedAt'],
+        importedFileName: driverValues['importedFileName'],
+        protocolVersion: driverValues['protocolVersion'],
+        deadBand: driverValues['deadBand'],
+        profileName: driverValues['profileName'],
         allowHardwareWrite,
         writeToHardware: allowHardwareWrite,
       };
@@ -198,7 +248,19 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {manifest?.id === 'mad60he' && (
+            <button
+              type="button"
+              onClick={handleImportKeyboardConfig}
+              title="Cargar archivo .mad-keyboard-config exportado del driver web oficial"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-surface-raised border border-border-default hover:border-accent hover:text-accent text-text-primary text-xs font-mono transition-colors cursor-pointer"
+            >
+              <FileUp className="w-3.5 h-3.5" />
+              Importar configuracion del teclado
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleImportCapture}
@@ -274,6 +336,27 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
               <Shield className="w-3 h-3" />
               {lastSentAt ? `enviado al teclado a las ${formatTime(lastSentAt)}` : 'solo guardado en el hub'}
             </span>
+            {driverValues['source'] === 'imported-file' && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                Origen: importado de archivo
+                {typeof driverValues['importedAt'] === 'number'
+                  ? ` (${formatDateTime(driverValues['importedAt'] as number)})`
+                  : ''}
+              </span>
+            )}
+            {driverValues['source'] === 'capture' && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-surface-base text-text-secondary border border-border-default">
+                Origen: captura JSON
+                {typeof driverValues['importedAt'] === 'number'
+                  ? ` (${formatDateTime(driverValues['importedAt'] as number)})`
+                  : ''}
+              </span>
+            )}
+            {(!driverValues['source'] || driverValues['source'] === 'default') && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-surface-base text-text-muted border border-border-subtle">
+                Origen: perfil local del hub
+              </span>
+            )}
             {hasUnsavedChanges ? (
               <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
                 Borrador con cambios pendientes
@@ -287,7 +370,14 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
           <p className="text-xs text-text-secondary leading-relaxed max-w-2xl">
             {lastSentAt
               ? `El perfil fue transmitido y verificado por eco en el teclado a las ${formatTime(lastSentAt)}. Las modificaciones posteriores permanecen en borrador hasta volver a guardar o aplicar.`
-              : 'El perfil actual reside exclusivamente en el hub. Ninguna configuracion se envia al teclado sin confirmacion explícita.'}
+              : 'El perfil actual reside exclusivamente en el hub. Ninguna configuracion se envia al teclado sin confirmacion explicita.'}
+            {driverValues['source'] === 'imported-file' && typeof driverValues['importedFileName'] === 'string'
+              ? ` Archivo cargado: ${driverValues['importedFileName']}${
+                  typeof driverValues['protocolVersion'] === 'string'
+                    ? ` (protocolo v${driverValues['protocolVersion']})`
+                    : ''
+                }.`
+              : ''}
           </p>
         </div>
 
@@ -356,6 +446,7 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
                     value={val}
                     savedValue={savedVal}
                     lastSentValue={lastSentVal}
+                    keyLabels={Array.isArray(driverValues['keyLabels']) ? (driverValues['keyLabels'] as string[]) : null}
                     disabled={isApplying}
                     onChange={(newVal) => handleValueChange(cap.id, newVal)}
                   />

@@ -23,8 +23,11 @@ Hub de escritorio modular (Electron, React, TypeScript, Tailwind CSS y node-hid 
   - Gestion de tres estados en la matriz de teclas: borrador con cambios pendientes, perfil guardado en el hub y ultimo enviado al teclado. Marca visual de pendiente en cada tecla modificada tras asignar valores por lote, que se sincroniza inmediatamente tras aplicar sin recargar la vista.
   - Selector de modo de visualizacion en la matriz para alternar entre recorrido de actuacion y Rapid Trigger (indicando ON/OFF y sensibilidades de pulsacion y rearme).
   - Indicador persistente del estado del perfil ("solo guardado en el hub" o "enviado al teclado a las HH:MM") e informe transparente del resultado del envio (trozos confirmados por eco 7/7 y 18/18 o motivo exacto del fallo).
-  - Nomenclatura rigurosa de la matriz: posicion 41 identificada como "Tecla 41", evitando etiquetas inventadas.
+  - Nomenclatura rigurosa de la matriz actualizada a la disposicion ANSI 60% real (Enter en indice 41; posiciones 40, 43, 54 y huecos de fila 4 marcados sin usar; fila 4 con 8 teclas activas incluyendo `Fn` en indice 69).
   - Suite de pruebas unificada con `pnpm test`.
+- Fase 4a completada (Importador `.mad-keyboard-config` para MAD60HE):
+  - Parser con validacion Zod en `drivers/mad60he/protocol/config-import.ts` para archivos `.mad-keyboard-config` (ASCII decimal -> Base64 -> JSON anidado), verificacion de `protocolVersion` (1.xx) y limites del hardware (recorrido 10-400 cs mm, Rapid Trigger 2-400 cs mm), descartando la fila 5 auxiliar.
+  - Boton "Importar configuracion del teclado" en la vista del dispositivo que carga el perfil, extrae nombres de tecla desde `keyboardAction` capa 0 y muestra origen (`importado de archivo`) y fecha sin escribir al hardware (requiere interruptor explicito para enviar).
 
 ## Como ejecutar
 

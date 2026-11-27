@@ -91,7 +91,10 @@ function setupIpc(): void {
         throw new Error(`Driver no encontrado: ${driverId}`);
       }
       if ('prepareApply' in driver && typeof (driver as { prepareApply?: unknown }).prepareApply === 'function') {
-        return (driver as unknown as { prepareApply: (keys: unknown) => unknown }).prepareApply(partialState['keys']);
+        return (driver as unknown as { prepareApply: (keys: unknown, keyLabels?: unknown) => unknown }).prepareApply(
+          partialState['keys'],
+          partialState['keyLabels']
+        );
       }
       return { changes: [], totalKeysAffected: 0 };
     }
@@ -104,13 +107,16 @@ function setupIpc(): void {
       if (!driver) {
         throw new Error(`Driver no encontrado: ${driverId}`);
       }
-      await driver.apply(partialState);
-      return { success: true };
+      const result = await driver.apply(partialState);
+      return result ?? { success: true };
     }
   );
 
   ipcMain.handle(IPC_CHANNELS.DRIVER_IMPORT_CAPTURE, async (_event, driverId: string) => {
     if (!mainWindow) return null;
+    if (driverId !== 'mad60he') {
+      throw new Error(`Importacion de captura no soportada para el driver: ${driverId}`);
+    }
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: 'Importar Perfil desde Captura JSON',
       filters: [{ name: 'Captura HID JSON', extensions: ['json'] }],
@@ -122,12 +128,31 @@ function setupIpc(): void {
     }
 
     const capturePath = filePaths[0]!;
-    if (driverId === 'mad60he') {
-      const { importProfileFromCapture } = await import('../../drivers/mad60he/protocol/storage.js');
-      const imported = importProfileFromCapture(capturePath);
-      return imported;
+    const { importProfileFromCapture } = await import('../../drivers/mad60he/protocol/storage.js');
+    return importProfileFromCapture(capturePath);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.DRIVER_IMPORT_CONFIG, async (_event, driverId: string) => {
+    if (!mainWindow) return null;
+    if (driverId !== 'mad60he') {
+      throw new Error(`Importacion de configuracion no soportada para el driver: ${driverId}`);
     }
-    return null;
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Importar configuracion del teclado (.mad-keyboard-config)',
+      filters: [
+        { name: 'Configuracion MAD60HE', extensions: ['mad-keyboard-config'] },
+        { name: 'Todos los archivos', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    });
+
+    if (canceled || filePaths.length === 0) {
+      return null;
+    }
+
+    const configPath = filePaths[0]!;
+    const { importMadKeyboardConfigFile } = await import('../../drivers/mad60he/protocol/config-import.js');
+    return importMadKeyboardConfigFile(configPath);
   });
 
   // Eventos hacia el Renderer

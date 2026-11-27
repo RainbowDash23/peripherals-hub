@@ -3,7 +3,18 @@ import manifestData from './manifest.json' with { type: 'json' };
 import { loadProfile, saveProfile } from './protocol/storage.js';
 import { encodeTable13, encodeTable14, type EncodedReport } from './protocol/codec.js';
 import { sendChunksWithEchoValidation } from './protocol/transmitter.js';
-import { TOTAL_USEFUL_KEYS, type KeyboardProfile, type KeyConfig } from './protocol/profile.js';
+import {
+  ACTUATION_MAX_RAW,
+  ACTUATION_MIN_RAW,
+  RT_MAX_RAW,
+  RT_MIN_RAW,
+  TOTAL_USEFUL_KEYS,
+  type DeadBandConfig,
+  type KeyboardProfile,
+  type KeyConfig,
+  type ProfileOrigin,
+} from './protocol/profile.js';
+import { getKeyLabelAtIndex } from './protocol/keymap.js';
 
 export const manifest = manifestData as unknown as DriverManifest;
 
@@ -69,6 +80,12 @@ export class Mad60HeDriver implements Driver {
       values: {
         keys: this.profile.keys,
         profileName: this.profile.name,
+        source: this.profile.source ?? 'default',
+        importedAt: this.profile.importedAt ?? null,
+        importedFileName: this.profile.importedFileName ?? null,
+        protocolVersion: this.profile.protocolVersion ?? null,
+        deadBand: this.profile.deadBand ?? null,
+        keyLabels: this.profile.keyLabels ?? null,
         allowHardwareWrite: this.isHardwareWriteAllowed(),
         lastSentToHardwareAt: this.profile.lastSentToHardwareAt,
         updatedAt: this.profile.updatedAt,
@@ -80,39 +97,39 @@ export class Mad60HeDriver implements Driver {
    * Calcula el plan de cambios comparando el estado actual con el solicitado,
    * validando estrictamente los rangos de valores observados en las capturas.
    */
-  public prepareApply(newKeys: readonly KeyConfig[]): ApplyPlan {
+  public prepareApply(newKeys: readonly KeyConfig[], keyLabels?: readonly string[]): ApplyPlan {
     if (newKeys.length !== TOTAL_USEFUL_KEYS) {
       throw new Error(`Se requieren exactamente ${TOTAL_USEFUL_KEYS} teclas en el perfil`);
     }
 
+    const effectiveLabels = keyLabels ?? this.profile.keyLabels;
     const changes: KeyDifference[] = [];
-    const labels = [
-      ['Esc', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'Backspace'],
-      ['Tab', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\\'],
-      ['Caps', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', "'", 'Enter', 'Tecla 41'],
-    ];
 
     for (let i = 0; i < TOTAL_USEFUL_KEYS; i++) {
       const cur = this.profile.keys[i] ?? { actuationRaw: 150, rtEnabled: 0, rtPressRaw: 50, rtReleaseRaw: 50 };
       const next = newKeys[i]!;
 
       // Validacion de rangos confirmados segun web oficial
-      if (next.actuationRaw < 10 || next.actuationRaw > 400) {
-        throw new Error(`Valor de actuacion fuera de rango valido (10 a 400 cs mm) en tecla ${i}: ${next.actuationRaw}`);
+      if (next.actuationRaw < ACTUATION_MIN_RAW || next.actuationRaw > ACTUATION_MAX_RAW) {
+        throw new Error(
+          `Valor de actuacion fuera de rango valido (${ACTUATION_MIN_RAW} a ${ACTUATION_MAX_RAW} cs mm) en tecla ${i}: ${next.actuationRaw}`
+        );
       }
       if (next.rtEnabled !== 0 && next.rtEnabled !== 1) {
         throw new Error(`Estado de Rapid Trigger invalido en tecla ${i}: ${next.rtEnabled}`);
       }
-      if (next.rtPressRaw < 2 || next.rtPressRaw > 400) {
-        throw new Error(`Sensibilidad de pulsacion RT fuera de rango valido (2 a 400 cs mm) en tecla ${i}: ${next.rtPressRaw}`);
+      if (next.rtPressRaw < RT_MIN_RAW || next.rtPressRaw > RT_MAX_RAW) {
+        throw new Error(
+          `Sensibilidad de pulsacion RT fuera de rango valido (${RT_MIN_RAW} a ${RT_MAX_RAW} cs mm) en tecla ${i}: ${next.rtPressRaw}`
+        );
       }
-      if (next.rtReleaseRaw < 2 || next.rtReleaseRaw > 400) {
-        throw new Error(`Sensibilidad de rearme RT fuera de rango valido (2 a 400 cs mm) en tecla ${i}: ${next.rtReleaseRaw}`);
+      if (next.rtReleaseRaw < RT_MIN_RAW || next.rtReleaseRaw > RT_MAX_RAW) {
+        throw new Error(
+          `Sensibilidad de rearme RT fuera de rango valido (${RT_MIN_RAW} a ${RT_MAX_RAW} cs mm) en tecla ${i}: ${next.rtReleaseRaw}`
+        );
       }
 
-      const row = Math.floor(i / 14);
-      const col = i % 14;
-      const keyLabel = row < 3 && labels[row]?.[col] ? labels[row]![col]! : `Tecla ${i}`;
+      const keyLabel = getKeyLabelAtIndex(i, effectiveLabels);
 
       if (cur.actuationRaw !== next.actuationRaw) {
         changes.push({
@@ -191,10 +208,42 @@ export class Mad60HeDriver implements Driver {
       };
     }
 
-    const plan = this.prepareApply(partialState['keys'] as KeyConfig[]);
+    const nextLabels =
+      Array.isArray(partialState['keyLabels']) && partialState['keyLabels'].length === TOTAL_USEFUL_KEYS
+        ? (partialState['keyLabels'] as string[])
+        : this.profile.keyLabels;
+
+    const plan = this.prepareApply(partialState['keys'] as KeyConfig[], nextLabels);
     const now = Date.now();
+    const rawSource = partialState['source'];
+    const validSource: ProfileOrigin =
+      rawSource === 'imported-file' || rawSource === 'capture' || rawSource === 'default'
+        ? rawSource
+        : this.profile.source ?? 'default';
+
+    const rawDeadBand = partialState['deadBand'] as DeadBandConfig | null | undefined;
+    const validDeadBand =
+      rawDeadBand && typeof rawDeadBand.topRaw === 'number' && typeof rawDeadBand.bottomRaw === 'number'
+        ? rawDeadBand
+        : this.profile.deadBand;
+
     this.profile = {
       ...this.profile,
+      name: typeof partialState['profileName'] === 'string' && partialState['profileName'].trim().length > 0
+        ? partialState['profileName'].trim()
+        : this.profile.name,
+      source: validSource,
+      importedAt: typeof partialState['importedAt'] === 'number' ? partialState['importedAt'] : this.profile.importedAt,
+      importedFileName:
+        typeof partialState['importedFileName'] === 'string'
+          ? partialState['importedFileName']
+          : this.profile.importedFileName,
+      protocolVersion:
+        typeof partialState['protocolVersion'] === 'string'
+          ? partialState['protocolVersion']
+          : this.profile.protocolVersion,
+      deadBand: validDeadBand,
+      keyLabels: nextLabels,
       updatedAt: now,
       keys: partialState['keys'] as KeyConfig[],
     };

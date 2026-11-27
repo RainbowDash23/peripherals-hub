@@ -42,7 +42,8 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
-
+*.mad-keyboard-config
+!drivers/mad60he/protocol/fixtures/*.mad-keyboard-config
 # Raw captures / scratch (keep documentation markdown in repo, exclude huge raw pcap if needed)
 *.pcap
 *.pcapng

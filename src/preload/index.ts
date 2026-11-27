@@ -32,12 +32,35 @@ export interface DriverApplyResult {
 
 export interface DriverImportResult {
   readonly name: string;
+  readonly importedAt?: number;
   readonly keys: unknown[];
   readonly summary?: {
     readonly table13Found: boolean;
     readonly table13KeysCount: number;
     readonly table14Found: boolean;
     readonly table14KeysCount: number;
+    readonly description: string;
+  };
+}
+
+export interface DriverConfigImportResult {
+  readonly name: string;
+  readonly source: 'imported-file';
+  readonly importedAt: number;
+  readonly importedFileName: string;
+  readonly protocolVersion: string;
+  readonly deadBand: {
+    readonly topRaw: number;
+    readonly bottomRaw: number;
+  };
+  readonly keyLabels: readonly string[];
+  readonly keys: unknown[];
+  readonly summary: {
+    readonly profileName: string;
+    readonly protocolVersion: string;
+    readonly keysCount: number;
+    readonly deadBandTopRaw: number;
+    readonly deadBandBottomRaw: number;
     readonly description: string;
   };
 }
@@ -54,6 +77,7 @@ export interface PeripheralsHubApi {
   prepareDriverApply: (driverId: string, partialState: Record<string, unknown>) => Promise<DriverPreparePlan>;
   applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) => Promise<DriverApplyResult>;
   importDriverCapture: (driverId: string) => Promise<DriverImportResult | null>;
+  importKeyboardConfig: (driverId: string) => Promise<DriverConfigImportResult | null>;
 }
 
 export const api: PeripheralsHubApi = {
@@ -88,6 +112,7 @@ export const api: PeripheralsHubApi = {
   applyDriverSettings: (driverId: string, partialState: Record<string, unknown>) =>
     ipcRenderer.invoke(IPC_CHANNELS.DRIVER_APPLY, driverId, partialState),
   importDriverCapture: (driverId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRIVER_IMPORT_CAPTURE, driverId),
+  importKeyboardConfig: (driverId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRIVER_IMPORT_CONFIG, driverId),
 };
 
 contextBridge.exposeInMainWorld('peripheralsHub', api);

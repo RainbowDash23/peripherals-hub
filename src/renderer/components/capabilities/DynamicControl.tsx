@@ -7,6 +7,7 @@ interface DynamicControlProps {
   readonly value: unknown;
   readonly savedValue?: unknown;
   readonly lastSentValue?: unknown;
+  readonly keyLabels?: readonly string[] | null;
   readonly onChange?: (value: unknown) => void;
   readonly disabled?: boolean;
 }
@@ -16,6 +17,7 @@ export const DynamicControl: React.FC<DynamicControlProps> = ({
   value,
   savedValue,
   lastSentValue,
+  keyLabels,
   onChange,
   disabled = false,
 }) => {
@@ -117,6 +119,7 @@ export const DynamicControl: React.FC<DynamicControlProps> = ({
             value={value}
             savedValue={savedValue}
             lastSentValue={lastSentValue}
+            keyLabels={keyLabels}
             disabled={disabled}
             onChange={onChange}
           />
