@@ -2,7 +2,7 @@ import type { DeviceConnection, DeviceState, Driver, DriverManifest } from '../.
 import manifestData from './manifest.json' with { type: 'json' };
 import { loadProfile, saveProfile } from './protocol/storage.js';
 import { encodeTable13, encodeTable14, type EncodedReport } from './protocol/codec.js';
-import { sendChunksWithEchoValidation } from './protocol/transmitter.js';
+import { sendChunksWithEchoValidation, type HidDeviceTransport } from './protocol/transmitter.js';
 import { readMad60HeProfile } from './protocol/reader.js';
 import {
   ACTUATION_MAX_RAW,
@@ -18,6 +18,15 @@ import {
 import { getKeyLabelAtIndex } from './protocol/keymap.js';
 
 export const manifest = manifestData as unknown as DriverManifest;
+
+export type HidClosableTransport = HidDeviceTransport & {
+  close(): void;
+};
+
+export interface Mad60HeDriverOptions {
+  readonly profilePath?: string;
+  readonly transportFactory?: (path: string) => Promise<HidClosableTransport> | HidClosableTransport;
+}
 
 export interface KeyDifference {
   readonly index: number;
@@ -52,12 +61,24 @@ export class Mad60HeDriver implements Driver {
   public readonly manifest: DriverManifest = manifest;
   private connection: DeviceConnection | null = null;
   private profile: KeyboardProfile;
+  private readonly profilePath?: string;
+  private readonly transportFactory?: (path: string) => Promise<HidClosableTransport> | HidClosableTransport;
   private allowHardwareWrite: boolean = false;
   private hasHardwareRead: boolean = false;
   private activeReadPromise: Promise<DeviceState> | null = null;
 
-  constructor() {
-    this.profile = loadProfile();
+  constructor(options: Mad60HeDriverOptions = {}) {
+    this.profilePath = options.profilePath;
+    this.transportFactory = options.transportFactory;
+    this.profile = loadProfile(this.profilePath);
+  }
+
+  private async openHidTransport(path: string): Promise<HidClosableTransport> {
+    if (this.transportFactory) {
+      return this.transportFactory(path);
+    }
+    const HID = await import('node-hid');
+    return new HID.default.HID(path) as unknown as HidClosableTransport;
   }
 
   public isHardwareWriteAllowed(): boolean {
@@ -119,8 +140,7 @@ export class Mad60HeDriver implements Driver {
       }
 
       console.log(`[Mad60HeDriver] Leyendo configuracion en vivo del teclado en ${this.connection.path}...`);
-      const HID = await import('node-hid');
-      const device = new HID.default.HID(this.connection.path);
+      const device = await this.openHidTransport(this.connection.path);
 
       try {
         const liveProfile = await readMad60HeProfile(device, { timeoutMs: 800, maxRetriesOnMismatch: 1 });
@@ -137,7 +157,7 @@ export class Mad60HeDriver implements Driver {
           keys: liveProfile.keys,
           lastSentToHardwareAt: this.profile.lastSentToHardwareAt,
         };
-        saveProfile(this.profile);
+        saveProfile(this.profile, this.profilePath);
         console.log(
           `[Mad60HeDriver] Lectura completa del teclado exitosa (v${liveProfile.protocolVersion}, deadband ${liveProfile.deadBand.topRaw}/${liveProfile.deadBand.bottomRaw} cs mm).`
         );
@@ -313,7 +333,7 @@ export class Mad60HeDriver implements Driver {
       updatedAt: now,
       keys: partialState['keys'] as KeyConfig[],
     };
-    saveProfile(this.profile);
+    saveProfile(this.profile, this.profilePath);
     console.log(`[Mad60HeDriver] Perfil guardado localmente (${plan.changes.length} cambios registrados).`);
 
     const hardwareRequested = partialState['writeToHardware'] === true;
@@ -329,8 +349,7 @@ export class Mad60HeDriver implements Driver {
       }
 
       console.log(`[Mad60HeDriver] Opcion explicita activa: enviando al hardware en ${this.connection.path}...`);
-      const HID = await import('node-hid');
-      const device = new HID.default.HID(this.connection.path);
+      const device = await this.openHidTransport(this.connection.path);
 
       try {
         const t13Res = await sendChunksWithEchoValidation(device, plan.t13Reports, 1000);
@@ -342,7 +361,7 @@ export class Mad60HeDriver implements Driver {
           ...this.profile,
           lastSentToHardwareAt: appliedAt,
         };
-        saveProfile(this.profile);
+        saveProfile(this.profile, this.profilePath);
 
         return {
           success: true,

@@ -718,11 +718,22 @@ var Mad60HeDriver = class {
   manifest = manifest;
   connection = null;
   profile;
+  profilePath;
+  transportFactory;
   allowHardwareWrite = false;
   hasHardwareRead = false;
   activeReadPromise = null;
-  constructor() {
-    this.profile = loadProfile();
+  constructor(options = {}) {
+    this.profilePath = options.profilePath;
+    this.transportFactory = options.transportFactory;
+    this.profile = loadProfile(this.profilePath);
+  }
+  async openHidTransport(path) {
+    if (this.transportFactory) {
+      return this.transportFactory(path);
+    }
+    const HID = await import("node-hid");
+    return new HID.default.HID(path);
   }
   isHardwareWriteAllowed() {
     if (!this.hasHardwareRead) {
@@ -776,8 +787,7 @@ var Mad60HeDriver = class {
         throw new Error("No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para leer el teclado.");
       }
       console.log(`[Mad60HeDriver] Leyendo configuracion en vivo del teclado en ${this.connection.path}...`);
-      const HID = await import("node-hid");
-      const device = new HID.default.HID(this.connection.path);
+      const device = await this.openHidTransport(this.connection.path);
       try {
         const liveProfile = await readMad60HeProfile(device, { timeoutMs: 800, maxRetriesOnMismatch: 1 });
         this.hasHardwareRead = true;
@@ -793,7 +803,7 @@ var Mad60HeDriver = class {
           keys: liveProfile.keys,
           lastSentToHardwareAt: this.profile.lastSentToHardwareAt
         };
-        saveProfile(this.profile);
+        saveProfile(this.profile, this.profilePath);
         console.log(
           `[Mad60HeDriver] Lectura completa del teclado exitosa (v${liveProfile.protocolVersion}, deadband ${liveProfile.deadBand.topRaw}/${liveProfile.deadBand.bottomRaw} cs mm).`
         );
@@ -932,7 +942,7 @@ var Mad60HeDriver = class {
       updatedAt: now,
       keys: partialState["keys"]
     };
-    saveProfile(this.profile);
+    saveProfile(this.profile, this.profilePath);
     console.log(`[Mad60HeDriver] Perfil guardado localmente (${plan.changes.length} cambios registrados).`);
     const hardwareRequested = partialState["writeToHardware"] === true;
     const hardwareEnabled = this.isHardwareWriteAllowed() || hardwareRequested && this.hasHardwareRead;
@@ -946,8 +956,7 @@ var Mad60HeDriver = class {
         throw new Error("No se detecto endpoint de control HID (UP 0xFF60, usage 0x61) para emitir escrituras al hardware");
       }
       console.log(`[Mad60HeDriver] Opcion explicita activa: enviando al hardware en ${this.connection.path}...`);
-      const HID = await import("node-hid");
-      const device = new HID.default.HID(this.connection.path);
+      const device = await this.openHidTransport(this.connection.path);
       try {
         const t13Res = await sendChunksWithEchoValidation(device, plan.t13Reports, 1e3);
         const t14Res = await sendChunksWithEchoValidation(device, plan.t14Reports, 1e3);
@@ -957,7 +966,7 @@ var Mad60HeDriver = class {
           ...this.profile,
           lastSentToHardwareAt: appliedAt
         };
-        saveProfile(this.profile);
+        saveProfile(this.profile, this.profilePath);
         return {
           success: true,
           savedLocally: true,

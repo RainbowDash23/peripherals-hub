@@ -1,10 +1,18 @@
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readMad60HeProfile } from './reader.js';
 import { HeaderMismatchError, type HidDeviceTransport } from './transmitter.js';
-import { TOTAL_USEFUL_KEYS } from './profile.js';
-import { DEFAULT_MAD60HE_KEY_LABELS } from './keymap.js';
+import { TOTAL_USEFUL_KEYS, type KeyConfig } from './profile.js';
+import { DEFAULT_MAD60HE_KEY_LABELS, UNUSED_KEY_LABEL } from './keymap.js';
+import { Mad60HeDriver } from '../index.js';
+import {
+  applyBatchToMatrix,
+  getActiveMatrixIndices,
+  resolveSelectionBatchState,
+  toKeyMatrixDict,
+} from '../../../src/renderer/components/capabilities/key-matrix-helpers.js';
 
 interface CaptureEntry {
   readonly t: number;
@@ -241,6 +249,135 @@ export async function runReaderTests(): Promise<boolean> {
       throw new Error('Debio fallar por timeout cuando el teclado no responde');
     }
     console.log('[Test] Timeout limpio sin perfil parcial verificado.');
+  }
+
+  // 5. Flujo completo Driver -> readState() -> Helpers UI usando mad60he_lectura_en_vivo.json
+  {
+    const tempDir = mkdtempSync(join(tmpdir(), 'mad60he-driver-test-'));
+    const tempProfilePath = join(tempDir, 'mad60he.json');
+    try {
+      const mock = new ReplayReaderTransport(captureEntries);
+      const closableMock = Object.assign(mock, { close: () => {} });
+      const driver = new Mad60HeDriver({
+        profilePath: tempProfilePath,
+        transportFactory: () => closableMock,
+      });
+
+      await driver.connect({
+        path: 'mock-hid://mad60he-ctrl',
+        descriptor: {
+          vendorId: 0x373b,
+          productId: 0x1053,
+          path: 'mock-hid://mad60he-ctrl',
+          release: 0x0106,
+          interface: 1,
+        },
+      });
+
+      const readResult = await driver.readFromHardware();
+      const exposedState = await driver.readState();
+
+      for (const state of [readResult, exposedState]) {
+        if (state.values['hasHardwareRead'] !== true || state.values['source'] !== 'keyboard') {
+          throw new Error('El driver no marco hasHardwareRead=true o source="keyboard" tras la lectura');
+        }
+        const keys = state.values['keys'] as readonly KeyConfig[];
+        const labels = state.values['keyLabels'] as readonly string[];
+        if (!Array.isArray(keys) || keys.length !== TOTAL_USEFUL_KEYS) {
+          throw new Error(`Se esperaban ${TOTAL_USEFUL_KEYS} teclas en readState()`);
+        }
+
+        const unusedSet = new Set([40, 43, 54, 59, 60, 61, 63, 64, 65]);
+        for (let idx = 0; idx < TOTAL_USEFUL_KEYS; idx++) {
+          const k = keys[idx]!;
+          if (unusedSet.has(idx)) {
+            if (labels[idx] !== UNUSED_KEY_LABEL) {
+              throw new Error(`Hueco ${idx} deberia ser "${UNUSED_KEY_LABEL}", recibido "${labels[idx]}"`);
+            }
+            continue;
+          }
+          if (idx === 29) {
+            if (k.actuationRaw !== 150 || k.rtEnabled !== 0 || k.rtPressRaw !== 11 || k.rtReleaseRaw !== 50) {
+              throw new Error(`Tecla A (idx 29) esperada 150/0/11/50, recibida ${JSON.stringify(k)}`);
+            }
+          } else {
+            if (k.actuationRaw !== 150 || k.rtEnabled !== 0 || k.rtPressRaw !== 50 || k.rtReleaseRaw !== 50) {
+              throw new Error(`Tecla valida ${idx} (${labels[idx]}) esperada 150/0/50/50, recibida ${JSON.stringify(k)}`);
+            }
+          }
+        }
+      }
+
+      // Verificar logica de seleccion inicial vacia y panel de edicion sincronizado con los valores reales
+      const matrixDict = toKeyMatrixDict(exposedState.values['keys']);
+      const fieldIds = ['actuationRaw', 'rtEnabled', 'rtPressRaw', 'rtReleaseRaw'];
+
+      const emptyBatch = resolveSelectionBatchState(new Set(), matrixDict, fieldIds);
+      if (
+        emptyBatch['actuationRaw']?.kind !== 'empty' ||
+        emptyBatch['rtEnabled']?.kind !== 'empty' ||
+        emptyBatch['rtPressRaw']?.kind !== 'empty' ||
+        emptyBatch['rtReleaseRaw']?.kind !== 'empty'
+      ) {
+        throw new Error(`Con 0 teclas seleccionadas el panel debe estar vacio: ${JSON.stringify(emptyBatch)}`);
+      }
+
+      const keyABatch = resolveSelectionBatchState(new Set([29]), matrixDict, fieldIds);
+      if (
+        keyABatch['actuationRaw']?.kind !== 'value' ||
+        keyABatch['actuationRaw'].value !== 150 ||
+        keyABatch['rtEnabled']?.kind !== 'value' ||
+        keyABatch['rtEnabled'].value !== 0 ||
+        keyABatch['rtPressRaw']?.kind !== 'value' ||
+        keyABatch['rtPressRaw'].value !== 11 ||
+        keyABatch['rtReleaseRaw']?.kind !== 'value' ||
+        keyABatch['rtReleaseRaw'].value !== 50
+      ) {
+        throw new Error(`Panel al seleccionar A (idx 29) incorrecto: ${JSON.stringify(keyABatch)}`);
+      }
+
+      const mixedBatch = resolveSelectionBatchState(new Set([29, 16]), matrixDict, fieldIds);
+      if (
+        mixedBatch['actuationRaw']?.kind !== 'value' ||
+        mixedBatch['actuationRaw'].value !== 150 ||
+        mixedBatch['rtEnabled']?.kind !== 'value' ||
+        mixedBatch['rtEnabled'].value !== 0 ||
+        mixedBatch['rtPressRaw']?.kind !== 'mixed' ||
+        mixedBatch['rtReleaseRaw']?.kind !== 'value' ||
+        mixedBatch['rtReleaseRaw'].value !== 50
+      ) {
+        throw new Error(`Panel mixto (A + W) incorrecto: ${JSON.stringify(mixedBatch)}`);
+      }
+
+      // Al aplicar solo rtEnabled=1 desde seleccion mixta, respeta rtPressRaw de cada tecla (A=11, W=50)
+      const applied = applyBatchToMatrix(
+        new Set([29, 16]),
+        matrixDict,
+        { ...mixedBatch, rtEnabled: { kind: 'value', value: 1 } },
+        TOTAL_USEFUL_KEYS,
+        true
+      ) as KeyConfig[];
+      if (applied[29]!.rtEnabled !== 1 || applied[29]!.rtPressRaw !== 11 || applied[16]!.rtPressRaw !== 50) {
+        throw new Error('Aplicacion parcial desde seleccion mixta sobreescribio rtPressRaw');
+      }
+
+      // Huecos sin switch excluidos de Seleccionar Todas (70 - 9 = 61 activas)
+      const activeIndices = getActiveMatrixIndices(
+        TOTAL_USEFUL_KEYS,
+        14,
+        undefined,
+        exposedState.values['keyLabels'] as readonly string[]
+      );
+      if (activeIndices.length !== 61 || [40, 43, 54, 59, 60, 61, 63, 64, 65].some((h) => activeIndices.includes(h))) {
+        throw new Error(`Seleccionar Todas incluyo huecos sin switch o conteo incorrecto: ${activeIndices.length}`);
+      }
+
+      console.log(
+        '[Test] Flujo Driver -> readState() -> Helpers UI verificado con mad60he_lectura_en_vivo.json (A=150/0/11/50, resto=150/0/50/50, 61 teclas activas).'
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   }
 
   console.log('=== Todas las pruebas de lector en vivo MAD60HE completadas con exito ===\n');

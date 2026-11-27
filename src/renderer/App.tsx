@@ -207,9 +207,9 @@ export const App: React.FC = () => {
           <LabModeView devices={devices} initialSelectedPath={targetLabEndpoint} />
         ) : selectedDevice ? (
           selectedDevice.status === 'supported' ? (
-            <DeviceView device={selectedDevice} onOpenInLab={handleOpenInLab} />
+            <DeviceView key={selectedDevice.id} device={selectedDevice} onOpenInLab={handleOpenInLab} />
           ) : (
-            <UnsupportedDeviceView device={selectedDevice} onOpenInLab={handleOpenInLab} />
+            <UnsupportedDeviceView key={selectedDevice.id} device={selectedDevice} onOpenInLab={handleOpenInLab} />
           )
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-text-muted space-y-2">

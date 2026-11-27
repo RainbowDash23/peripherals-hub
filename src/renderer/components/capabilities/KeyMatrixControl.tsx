@@ -1,12 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { KeyMatrixControlSchema } from '../../../core/drivers/types.js';
+import {
+  applyBatchToMatrix,
+  DEFAULT_KEY_VALUES,
+  getActiveMatrixIndices,
+  isKeyCustomized,
+  isUnusedMatrixKey,
+  resolveKeyLabelAt,
+  resolveSelectionBatchState,
+  toKeyMatrixDict,
+  type BatchFieldState,
+  type BatchSelectionState,
+} from './key-matrix-helpers.js';
 
 interface PrecisionRangeFieldProps {
   readonly label: string;
   readonly min: number;
   readonly max: number;
   readonly step: number;
-  readonly value: number;
+  readonly fieldState: BatchFieldState;
   readonly disabled: boolean;
   readonly onChange: (value: number) => void;
 }
@@ -16,22 +28,28 @@ const PrecisionRangeField: React.FC<PrecisionRangeFieldProps> = ({
   min,
   max,
   step,
-  value,
+  fieldState,
   disabled,
   onChange,
 }) => {
-  const [draftText, setDraftText] = useState<string>(String(value));
+  const numericValue = fieldState.kind === 'value' ? fieldState.value : null;
+  const [draftText, setDraftText] = useState<string>(numericValue !== null ? String(numericValue) : '');
 
   useEffect(() => {
-    setDraftText(String(value));
-  }, [value]);
+    setDraftText(numericValue !== null ? String(numericValue) : '');
+  }, [numericValue, fieldState.kind]);
 
   const clampValue = (next: number): number => Math.min(max, Math.max(min, Math.round(next)));
 
   const commitDraft = () => {
-    const parsed = Number.parseInt(draftText, 10);
+    const trimmed = draftText.trim();
+    if (trimmed.length === 0) {
+      setDraftText(numericValue !== null ? String(numericValue) : '');
+      return;
+    }
+    const parsed = Number.parseInt(trimmed, 10);
     if (Number.isNaN(parsed)) {
-      setDraftText(String(value));
+      setDraftText(numericValue !== null ? String(numericValue) : '');
       return;
     }
     const clamped = clampValue(parsed);
@@ -39,27 +57,52 @@ const PrecisionRangeField: React.FC<PrecisionRangeFieldProps> = ({
     setDraftText(String(clamped));
   };
 
+  const badgeText =
+    fieldState.kind === 'empty'
+      ? '-'
+      : fieldState.kind === 'mixed'
+      ? 'Varios'
+      : `${(fieldState.value / 100).toFixed(2)} mm`;
+
   return (
-    <div className="p-2.5 rounded bg-surface-raised border border-border-subtle space-y-2">
+    <div
+      className={`p-2.5 rounded bg-surface-raised border border-border-subtle space-y-2 ${
+        disabled ? 'opacity-60' : ''
+      }`}
+    >
       <div className="flex justify-between items-center text-text-secondary gap-2">
         <span>{label}</span>
-        <span className="text-text-primary font-bold tabular-nums">{(value / 100).toFixed(2)} mm</span>
+        <span
+          className={`font-bold tabular-nums ${
+            fieldState.kind === 'mixed'
+              ? 'text-amber-300'
+              : fieldState.kind === 'empty'
+              ? 'text-text-muted font-normal'
+              : 'text-text-primary'
+          }`}
+        >
+          {badgeText}
+        </span>
       </div>
       <input
         type="range"
         min={min}
         max={max}
         step={step}
-        value={value}
+        value={numericValue ?? min}
         disabled={disabled}
+        aria-label={label}
+        aria-valuetext={fieldState.kind === 'mixed' ? 'Varios' : fieldState.kind === 'empty' ? 'Sin seleccion' : badgeText}
         onChange={(e) => onChange(clampValue(Number(e.target.value)))}
-        className="w-full accent-accent bg-surface-muted h-1 rounded cursor-pointer"
+        className={`w-full accent-accent bg-surface-muted h-1 rounded cursor-pointer ${
+          fieldState.kind !== 'value' ? 'opacity-40' : ''
+        }`}
       />
       <div className="flex items-center justify-between gap-1.5 pt-0.5">
         <button
           type="button"
-          disabled={disabled || value <= min}
-          onClick={() => onChange(clampValue(value - step))}
+          disabled={disabled || numericValue === null || numericValue <= min}
+          onClick={() => numericValue !== null && onChange(clampValue(numericValue - step))}
           title="Disminuir 0.01 mm"
           className="px-2 py-0.5 rounded bg-surface-base border border-border-default hover:border-accent text-text-secondary hover:text-text-primary disabled:opacity-40 cursor-pointer"
         >
@@ -72,6 +115,7 @@ const PrecisionRangeField: React.FC<PrecisionRangeFieldProps> = ({
             max={max}
             step={step}
             value={draftText}
+            placeholder={fieldState.kind === 'mixed' ? 'Varios' : fieldState.kind === 'empty' ? '-' : ''}
             disabled={disabled}
             onChange={(e) => {
               const raw = e.target.value;
@@ -88,14 +132,14 @@ const PrecisionRangeField: React.FC<PrecisionRangeFieldProps> = ({
               }
             }}
             aria-label={`${label} en centesimas de milimetro`}
-            className="w-16 px-1.5 py-0.5 rounded bg-surface-base border border-border-default text-center text-text-primary tabular-nums focus:outline-none focus:border-accent"
+            className="w-16 px-1.5 py-0.5 rounded bg-surface-base border border-border-default text-center text-text-primary placeholder:text-text-muted tabular-nums focus:outline-none focus:border-accent disabled:cursor-not-allowed"
           />
           <span className="text-[10px] text-text-muted">cs mm</span>
         </div>
         <button
           type="button"
-          disabled={disabled || value >= max}
-          onClick={() => onChange(clampValue(value + step))}
+          disabled={disabled || numericValue === null || numericValue >= max}
+          onClick={() => numericValue !== null && onChange(clampValue(numericValue + step))}
           title="Aumentar 0.01 mm"
           className="px-2 py-0.5 rounded bg-surface-base border border-border-default hover:border-accent text-text-secondary hover:text-text-primary disabled:opacity-40 cursor-pointer"
         >
@@ -130,34 +174,28 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
   config,
   value,
   savedValue,
-  lastSentValue,
+  lastSentValue: _lastSentValue,
   keyLabels,
   onChange,
   disabled = false,
 }) => {
   const { rows, cols, totalKeys, rowLabels = [], fields = [] } = config ?? {};
   const [viewMode, setViewMode] = useState<'actuation' | 'rapidTrigger'>('actuation');
-  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set([29])); // Tecla A por defecto
-  const [batchValues, setBatchValues] = useState<Record<string, number>>({
-    actuationRaw: 150,
-    rtEnabled: 0,
-    rtPressRaw: 50,
-    rtReleaseRaw: 50,
-  });
+  // Nunca preseleccionar teclas al iniciar ni restaurar seleccion previa
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(() => new Set());
 
-  const toKeyDict = (val: unknown): Record<number, Record<string, number>> => {
-    if (val && typeof val === 'object' && !Array.isArray(val)) {
-      return val as Record<number, Record<string, number>>;
-    }
-    if (Array.isArray(val)) {
-      return Object.fromEntries(val.map((v: Record<string, number>, idx: number) => [idx, v]));
-    }
-    return {};
-  };
+  const matrixState = useMemo(() => toKeyMatrixDict(value), [value]);
+  const savedMatrixState = useMemo(() => toKeyMatrixDict(savedValue), [savedValue]);
+  const fieldIds = useMemo(() => fields.map((f) => f.id), [fields]);
 
-  const matrixState = toKeyDict(value);
-  const savedMatrixState = toKeyDict(savedValue);
-  const lastSentMatrixState = toKeyDict(lastSentValue);
+  const [batchState, setBatchState] = useState<BatchSelectionState>(() =>
+    resolveSelectionBatchState(new Set(), {}, fieldIds)
+  );
+
+  // Sincronizar panel con los valores reales de las teclas seleccionadas al cambiar seleccion o perfil leido
+  useEffect(() => {
+    setBatchState(resolveSelectionBatchState(selectedIndices, matrixState, fieldIds));
+  }, [selectedIndices, matrixState, fieldIds]);
 
   const toggleSelectKey = (idx: number, e: React.MouseEvent) => {
     if (disabled) return;
@@ -174,31 +212,14 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
     }
   };
 
-  const resolveLabelAt = (idx: number): string => {
-    if (Array.isArray(keyLabels) && typeof keyLabels[idx] === 'string' && keyLabels[idx]!.length > 0) {
-      return keyLabels[idx]!;
-    }
-    const r = Math.floor(idx / cols);
-    const c = idx % cols;
-    return rowLabels[r]?.[c] ?? `Tecla ${idx}`;
-  };
-
-  const isUnusedAt = (idx: number): boolean => {
-    const lbl = resolveLabelAt(idx).trim().toLowerCase();
-    return lbl === 'sin usar';
-  };
-
-  const activeKeyCount = Array.from({ length: totalKeys }, (_, i) => i).filter((i) => !isUnusedAt(i)).length;
+  const activeIndices = useMemo(
+    () => getActiveMatrixIndices(totalKeys, cols, rowLabels, keyLabels),
+    [totalKeys, cols, rowLabels, keyLabels]
+  );
 
   const selectAll = () => {
     if (disabled) return;
-    const all = new Set<number>();
-    for (let i = 0; i < totalKeys; i++) {
-      if (!isUnusedAt(i)) {
-        all.add(i);
-      }
-    }
-    setSelectedIndices(all);
+    setSelectedIndices(new Set(activeIndices));
   };
 
   const clearSelection = () => {
@@ -206,26 +227,29 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
     setSelectedIndices(new Set());
   };
 
-  const handleApplyToSelected = () => {
-    if (disabled || selectedIndices.size === 0) return;
-    const nextState = { ...matrixState };
-
-    for (const idx of selectedIndices) {
-      const current = nextState[idx] ?? { actuationRaw: 150, rtEnabled: 0, rtPressRaw: 50, rtReleaseRaw: 50 };
-      nextState[idx] = {
-        ...current,
-        ...batchValues,
-      };
-    }
-
-    // Si el valor inicial era un array, emitir array
-    if (Array.isArray(value)) {
-      const arr = Array.from({ length: totalKeys }, (_, i) => nextState[i] ?? { actuationRaw: 150, rtEnabled: 0, rtPressRaw: 50, rtReleaseRaw: 50 });
-      onChange?.(arr);
-    } else {
-      onChange?.(nextState);
-    }
+  const handleBatchFieldChange = (fieldId: string, nextValue: number) => {
+    setBatchState((prev) => ({
+      ...prev,
+      [fieldId]: { kind: 'value', value: nextValue },
+    }));
   };
+
+  const hasConcreteBatchField = Object.values(batchState).some((s) => s.kind === 'value');
+
+  const handleApplyToSelected = () => {
+    if (disabled || selectedIndices.size === 0 || !hasConcreteBatchField) return;
+    const nextMatrix = applyBatchToMatrix(
+      selectedIndices,
+      matrixState,
+      batchState,
+      totalKeys,
+      Array.isArray(value)
+    );
+    onChange?.(nextMatrix);
+  };
+
+  const noSelection = selectedIndices.size === 0;
+  const panelDisabled = disabled || noSelection;
 
   return (
     <div className="flex flex-col gap-4 p-4 rounded-lg bg-surface-raised border border-border-subtle">
@@ -233,15 +257,15 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3">
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-text-primary">
-            Seleccionadas: <strong className="text-accent">{selectedIndices.size}</strong> de {activeKeyCount} teclas activas
+            Seleccionadas: <strong className="text-accent">{selectedIndices.size}</strong> de {activeIndices.length} teclas activas
           </span>
           <span className="text-xs text-text-muted">(Usa Shift/Ctrl para seleccion multiple)</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Selector de Vista: Recorrido vs Rapid Trigger */}
+          {/* Selector de Enfasis Visual: Recorrido vs Rapid Trigger */}
           <div className="flex items-center gap-1 bg-surface-base p-0.5 rounded border border-border-default text-xs font-mono">
-            <span className="px-2 text-text-muted text-[11px]">Ver:</span>
+            <span className="px-2 text-text-muted text-[11px]">Destacar:</span>
             <button
               type="button"
               onClick={() => setViewMode('actuation')}
@@ -271,15 +295,15 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
               type="button"
               disabled={disabled}
               onClick={selectAll}
-              className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-accent hover:text-accent text-xs font-mono text-text-secondary transition-colors cursor-pointer"
+              className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-accent hover:text-accent text-xs font-mono text-text-secondary transition-colors cursor-pointer disabled:opacity-40"
             >
               Seleccionar Todas
             </button>
             <button
               type="button"
-              disabled={disabled}
+              disabled={disabled || noSelection}
               onClick={clearSelection}
-              className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-border-subtle text-xs font-mono text-text-secondary transition-colors cursor-pointer"
+              className="px-2.5 py-1 rounded bg-surface-base border border-border-default hover:border-border-subtle text-xs font-mono text-text-secondary transition-colors cursor-pointer disabled:opacity-40"
             >
               Limpiar
             </button>
@@ -287,54 +311,58 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
         </div>
       </div>
 
+      <p className="text-[11px] font-mono text-text-muted">
+        Cada tecla muestra su recorrido de actuacion (mm), estado de Rapid Trigger (ON/OFF) y sensibilidades al pulsar (↓) y al soltar (↑), atenuadas cuando RT esta apagado.
+      </p>
+
       {/* Matriz 5 x 14 */}
       <div className="overflow-x-auto pb-2">
         <div
-          className="grid gap-1.5 min-w-[720px]"
+          className="grid gap-1.5 min-w-[880px]"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
         >
           {Array.from({ length: totalKeys }, (_, idx) => {
             const r = Math.floor(idx / cols);
             const c = idx % cols;
-            const rawLabel = resolveLabelAt(idx);
-            const isUnused = rawLabel.trim().toLowerCase() === 'sin usar';
+            const rawLabel = resolveKeyLabelAt(idx, cols, rowLabels, keyLabels);
+            const isUnused = isUnusedMatrixKey(rawLabel);
             const isUnidentified = /^Tecla\s+\d+$/i.test(rawLabel) || rawLabel.toLowerCase() === 'sin identificar';
             const keyLabel = isUnidentified ? `Tecla ${idx}` : rawLabel;
-            const isSpecialKey = !isUnused && ((r === rows - 1 && c === cols - 1) || keyLabel === 'Fn' || keyLabel.startsWith('Esp_'));
+            const isSpecialKey =
+              !isUnused && ((r === rows - 1 && c === cols - 1) || keyLabel === 'Fn' || keyLabel.startsWith('Esp_'));
             const isSelected = selectedIndices.has(idx);
 
-            const keyData = matrixState[idx] ?? {
-              actuationRaw: 150,
-              rtEnabled: 0,
-              rtPressRaw: 50,
-              rtReleaseRaw: 50,
-            };
+            const keyData = matrixState[idx] ?? DEFAULT_KEY_VALUES;
+            const actuationRaw = keyData['actuationRaw'] ?? DEFAULT_KEY_VALUES.actuationRaw;
+            const rtEnabled = keyData['rtEnabled'] ?? DEFAULT_KEY_VALUES.rtEnabled;
+            const rtPressRaw = keyData['rtPressRaw'] ?? DEFAULT_KEY_VALUES.rtPressRaw;
+            const rtReleaseRaw = keyData['rtReleaseRaw'] ?? DEFAULT_KEY_VALUES.rtReleaseRaw;
+            const isRtOn = rtEnabled === 1;
 
             const savedKeyData = savedMatrixState[idx];
             const isPending =
               !isUnused &&
               savedKeyData !== undefined &&
-              (keyData.actuationRaw !== savedKeyData.actuationRaw ||
-                keyData.rtEnabled !== savedKeyData.rtEnabled ||
-                keyData.rtPressRaw !== savedKeyData.rtPressRaw ||
-                keyData.rtReleaseRaw !== savedKeyData.rtReleaseRaw);
+              (actuationRaw !== savedKeyData['actuationRaw'] ||
+                rtEnabled !== savedKeyData['rtEnabled'] ||
+                rtPressRaw !== savedKeyData['rtPressRaw'] ||
+                rtReleaseRaw !== savedKeyData['rtReleaseRaw']);
 
-            const isCustom = !isUnused && (keyData.actuationRaw !== 150 || keyData.rtEnabled === 1);
+            const isCustom = !isUnused && isKeyCustomized(keyData);
 
             return (
               <button
                 key={idx}
                 type="button"
                 disabled={disabled}
+                aria-pressed={isSelected}
                 onClick={(e) => toggleSelectKey(idx, e)}
                 title={
                   isUnused
                     ? `Posicion sin switch en layout ANSI (idx ${idx})`
-                    : isSpecialKey
-                    ? `Tecla especial de capa: ${keyLabel} (idx ${idx})${isPending ? ' - Pendiente de aplicar' : ''}`
-                    : `Tecla ${keyLabel} (idx ${idx})${isPending ? ' - Pendiente de aplicar' : ''}`
+                    : `${isSpecialKey ? 'Tecla especial' : 'Tecla'} ${keyLabel} (idx ${idx}): Act ${(actuationRaw / 100).toFixed(2)} mm, RT ${isRtOn ? 'ON' : 'OFF'}, Pulsar ${(rtPressRaw / 100).toFixed(2)} mm, Soltar ${(rtReleaseRaw / 100).toFixed(2)} mm${isPending ? ' - Pendiente de aplicar' : ''}`
                 }
-                className={`flex flex-col items-center justify-between p-1.5 h-16 rounded border text-left font-mono transition-all cursor-pointer relative ${
+                className={`flex flex-col items-stretch justify-between p-1.5 h-20 rounded border text-left font-mono transition-all cursor-pointer relative ${
                   isSelected
                     ? 'border-accent bg-accent/20 text-text-primary shadow-xs ring-1 ring-accent'
                     : isUnused
@@ -348,6 +376,7 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                     : 'border-border-subtle bg-surface-base/80 hover:border-border-default text-text-secondary'
                 }`}
               >
+                {/* Fila superior: Etiqueta + Metadatos */}
                 <div className="w-full flex items-center justify-between gap-1">
                   <span
                     className={`font-semibold whitespace-nowrap leading-none ${
@@ -380,24 +409,50 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                   </div>
                 </div>
 
-                <div className="w-full text-[9px] tabular-nums truncate text-center">
-                  {isUnused ? (
-                    <span className="text-text-muted/50">-</span>
-                  ) : viewMode === 'actuation' ? (
-                    <span>
-                      {((keyData.actuationRaw ?? 150) / 100).toFixed(2)} mm
-                      {keyData.rtEnabled === 1 && (
-                        <span className="ml-1 text-accent font-bold">RT</span>
-                      )}
+                {/* Cuerpo compacto con los 3 valores + estado RT */}
+                {isUnused ? (
+                  <div className="w-full text-[9px] text-center text-text-muted/50 my-auto">-</div>
+                ) : (
+                  <div className="w-full flex flex-col items-center gap-0.5 tabular-nums leading-tight">
+                    <span
+                      className={
+                        viewMode === 'actuation'
+                          ? 'text-[10px] font-bold text-accent'
+                          : 'text-[9px] font-normal text-text-muted'
+                      }
+                    >
+                      {(actuationRaw / 100).toFixed(2)} mm
                     </span>
-                  ) : keyData.rtEnabled === 1 ? (
-                    <span className="text-accent">
-                      RT: ↓{((keyData.rtPressRaw ?? 50) / 100).toFixed(2)} ↑{((keyData.rtReleaseRaw ?? 50) / 100).toFixed(2)}
+
+                    <span
+                      className={`px-1 rounded text-[8px] border leading-tight ${
+                        isRtOn
+                          ? viewMode === 'rapidTrigger'
+                            ? 'bg-accent/25 text-accent border-accent/60 font-bold'
+                            : 'bg-accent/15 text-accent/90 border-accent/30 font-semibold'
+                          : viewMode === 'rapidTrigger'
+                          ? 'bg-surface-muted/60 text-text-secondary border-border-default'
+                          : 'bg-surface-muted/30 text-text-muted/70 border-border-subtle/50'
+                      }`}
+                    >
+                      {isRtOn ? 'RT ON' : 'RT OFF'}
                     </span>
-                  ) : (
-                    <span className="text-text-muted">RT OFF</span>
-                  )}
-                </div>
+
+                    <span
+                      className={`text-[8.5px] whitespace-nowrap ${
+                        isRtOn
+                          ? viewMode === 'rapidTrigger'
+                            ? 'text-accent font-semibold'
+                            : 'text-text-secondary font-medium'
+                          : viewMode === 'rapidTrigger'
+                          ? 'text-text-muted/75'
+                          : 'text-text-muted/50'
+                      }`}
+                    >
+                      ↓{(rtPressRaw / 100).toFixed(2)} ↑{(rtReleaseRaw / 100).toFixed(2)}
+                    </span>
+                  </div>
+                )}
               </button>
             );
           })}
@@ -405,24 +460,35 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
       </div>
 
       {/* Panel de Edicion por Lote para Teclas Seleccionadas */}
-      <div className="rounded border border-border-subtle bg-surface-base p-3.5 space-y-3">
-        <div className="flex items-center justify-between">
+      <div
+        aria-disabled={panelDisabled}
+        className={`rounded border border-border-subtle bg-surface-base p-3.5 space-y-3 transition-opacity ${
+          noSelection ? 'opacity-75' : ''
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs font-mono uppercase tracking-wider text-text-muted">
             Configurar Valor para Teclas Seleccionadas ({selectedIndices.size})
           </span>
           <button
             type="button"
-            disabled={disabled || selectedIndices.size === 0}
+            disabled={panelDisabled || !hasConcreteBatchField}
             onClick={handleApplyToSelected}
-            className="px-3 py-1 rounded bg-accent/20 border border-accent/40 hover:bg-accent/30 text-accent text-xs font-mono font-medium transition-colors cursor-pointer disabled:opacity-40"
+            className="px-3 py-1 rounded bg-accent/20 border border-accent/40 hover:bg-accent/30 text-accent text-xs font-mono font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Asignar a Seleccionadas
           </button>
         </div>
 
+        {noSelection && (
+          <p className="text-xs font-mono text-text-muted">
+            Ninguna tecla seleccionada. Haz clic en una o varias teclas de la matriz para inspeccionar o editar sus valores reales.
+          </p>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
           {fields.map((f) => {
-            const val = batchValues[f.id] ?? (f.id === 'rtEnabled' ? 0 : f.id === 'actuationRaw' ? 150 : 50);
+            const fieldState: BatchFieldState = batchState[f.id] ?? { kind: 'empty' };
 
             if (f.primitive === 'slider') {
               const minVal = f.min ?? (f.id === 'actuationRaw' ? 10 : 2);
@@ -436,32 +502,47 @@ export const KeyMatrixControl: React.FC<KeyMatrixControlProps> = ({
                   min={minVal}
                   max={maxVal}
                   step={stepVal}
-                  value={val as number}
-                  disabled={disabled || selectedIndices.size === 0}
-                  onChange={(nextVal) =>
-                    setBatchValues((prev) => ({ ...prev, [f.id]: nextVal }))
-                  }
+                  fieldState={fieldState}
+                  disabled={panelDisabled}
+                  onChange={(nextVal) => handleBatchFieldChange(f.id, nextVal)}
                 />
               );
             }
 
             if (f.primitive === 'toggle') {
+              const toggleLabel =
+                fieldState.kind === 'empty'
+                  ? '-'
+                  : fieldState.kind === 'mixed'
+                  ? 'Varios'
+                  : fieldState.value === 1
+                  ? 'Habilitado'
+                  : 'Deshabilitado';
+
               return (
-                <div key={f.id} className="p-2.5 rounded bg-surface-raised border border-border-subtle flex items-center justify-between">
+                <div
+                  key={f.id}
+                  className={`p-2.5 rounded bg-surface-raised border border-border-subtle flex items-center justify-between ${
+                    panelDisabled ? 'opacity-60' : ''
+                  }`}
+                >
                   <span className="text-text-secondary">{f.label}</span>
                   <button
                     type="button"
-                    disabled={disabled || selectedIndices.size === 0}
-                    onClick={() =>
-                      setBatchValues((prev) => ({ ...prev, [f.id]: prev[f.id] === 1 ? 0 : 1 }))
-                    }
-                    className={`px-3 py-1 rounded text-xs transition-colors cursor-pointer ${
-                      val === 1
+                    disabled={panelDisabled}
+                    onClick={() => {
+                      const nextToggle = fieldState.kind === 'value' && fieldState.value === 1 ? 0 : 1;
+                      handleBatchFieldChange(f.id, nextToggle);
+                    }}
+                    className={`px-3 py-1 rounded text-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                      fieldState.kind === 'mixed'
+                        ? 'bg-amber-500/15 border border-amber-500/40 text-amber-300'
+                        : fieldState.kind === 'value' && fieldState.value === 1
                         ? 'bg-accent/20 border border-accent text-accent'
                         : 'bg-surface-base border border-border-default text-text-muted'
                     }`}
                   >
-                    {val === 1 ? 'Habilitado' : 'Deshabilitado'}
+                    {toggleLabel}
                   </button>
                 </div>
               );

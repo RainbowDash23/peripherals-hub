@@ -61,6 +61,9 @@ export const DeviceView: React.FC<DeviceViewProps> = ({ device, onOpenInLab }) =
     if (typeof values['lastSentToHardwareAt'] === 'number') {
       setLastSentAt(values['lastSentToHardwareAt']);
       setLastSentValues(JSON.parse(JSON.stringify(values)));
+    } else {
+      setLastSentAt(null);
+      setLastSentValues({});
     }
 
     if (announce) {
